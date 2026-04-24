@@ -1,1 +1,54 @@
+name: Atualizar Dashboard Eurofarma
+
+on:
+  schedule:
+    # Horários em UTC (Brasil = UTC-3)
+    # 08:00 BRT = 11:00 UTC
+    - cron: '0 11 * * 1-5'
+    # 12:00 BRT = 15:00 UTC
+    - cron: '0 15 * * 1-5'
+    # 16:00 BRT = 19:00 UTC
+    - cron: '0 19 * * 1-5'
+    # 19:00 BRT = 22:00 UTC
+    - cron: '0 22 * * 1-5'
+
+  # Permite rodar manualmente pelo botão no GitHub
+  workflow_dispatch:
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: |
+          pip install requests openpyxl
+
+      - name: Baixar XLS e gerar data.js
+        env:
+          ONEDRIVE_URL: ${{ secrets.ONEDRIVE_DOWNLOAD_URL }}
+          SOURCING_URL: ${{ secrets.SOURCING_DOWNLOAD_URL }}
+        run: python scripts/gerar_data.py
+
+      - name: Commitar e publicar se houve mudança
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.js
+          # Só commita se realmente mudou
+          if git diff --staged --quiet; then
+            echo "Nenhuma mudança nos dados. Nada a commitar."
+          else
+            TIMESTAMP=$(TZ='America/Sao_Paulo' date '+%d/%m/%Y %H:%M')
+            git commit -m "dados: atualização automática ${TIMESTAMP}"
+            git push
+          fi
 
