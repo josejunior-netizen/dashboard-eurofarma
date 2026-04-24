@@ -34,8 +34,8 @@ jobs:
 
       - name: Baixar XLS e gerar data.js
         env:
-          ONEDRIVE_URL: ${{ secrets.ONEDRIVE_DOWNLOAD_URL }}
-          SOURCING_URL: ${{ secrets.SOURCING_DOWNLOAD_URL }}
+          ONEDRIVE_URL: ${{ secrets.ONEDRIVE_URL }}
+          SOURCING_URL: ${{ secrets.SOURCING_URL }}
         run: python scripts/gerar_data.py
 
       - name: Commitar e publicar se houve mudança
