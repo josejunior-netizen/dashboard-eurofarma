@@ -2,16 +2,10 @@ name: Atualizar Dashboard Eurofarma
 
 on:
   schedule:
-    # Horários em UTC (Brasil = UTC-3)
-    # 08:00 BRT = 11:00 UTC
     - cron: '0 11 * * 1-5'
-    # 12:00 BRT = 15:00 UTC
     - cron: '0 15 * * 1-5'
-    # 16:00 BRT = 19:00 UTC
     - cron: '0 19 * * 1-5'
-    # 19:00 BRT = 22:00 UTC
     - cron: '0 22 * * 1-5'
-
   workflow_dispatch:
 
 jobs:
@@ -28,8 +22,23 @@ jobs:
           python-version: '3.11'
 
       - name: Instalar dependências
+        run: pip install requests openpyxl
+
+      - name: Verificar secrets
         run: |
-          pip install requests openpyxl
+          if [ -z "$ONEDRIVE_URL" ]; then
+            echo "ERRO: ONEDRIVE_URL está vazio"
+          else
+            echo "ONEDRIVE_URL OK (${#ONEDRIVE_URL} caracteres)"
+          fi
+          if [ -z "$SOURCING_URL" ]; then
+            echo "ERRO: SOURCING_URL está vazio"
+          else
+            echo "SOURCING_URL OK (${#SOURCING_URL} caracteres)"
+          fi
+        env:
+          ONEDRIVE_URL: ${{ secrets.ONEDRIVE_URL }}
+          SOURCING_URL: ${{ secrets.SOURCING_URL }}
 
       - name: Baixar XLS e gerar data.js
         env:
