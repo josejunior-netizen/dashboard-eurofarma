@@ -12,7 +12,6 @@ on:
     # 19:00 BRT = 22:00 UTC
     - cron: '0 22 * * 1-5'
 
-  # Permite rodar manualmente pelo botão no GitHub
   workflow_dispatch:
 
 jobs:
@@ -42,8 +41,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data.js
-          # Só commita se realmente mudou
+          git add -f data.js
           if git diff --staged --quiet; then
             echo "Nenhuma mudança nos dados. Nada a commitar."
           else
@@ -51,4 +49,3 @@ jobs:
             git commit -m "dados: atualização automática ${TIMESTAMP}"
             git push
           fi
-
