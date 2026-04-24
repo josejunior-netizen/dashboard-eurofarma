@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel Operacional · Hotéis Recorrentes · Eurofarma</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+:root{
+  --ink:#0f1117;--ink2:#2d3142;--ink3:#5a5f73;--ink4:#9197ab;--ink5:#c8ccd8;
+  --bg:#f4f5f8;--surf:#ffffff;--border:#e2e4ec;--border2:#cfd3df;
+  --accord:#0a6640;--accord-bg:#edfaf3;--accord-mid:#12a05e;--accord-light:#b6f0d3;
+  --hist:#1a4d8f;--hist-bg:#eef4ff;--hist-mid:#2563eb;--hist-light:#bfdbfe;
+  --sem:#7a3c00;--sem-bg:#fff7ed;--sem-mid:#d97706;--sem-light:#fde68a;
+  --div:#8b1a1a;--div-bg:#fff1f1;--div-mid:#dc2626;--div-light:#fecaca;
+  --r:10px;--rl:14px;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow-md:0 4px 16px rgba(0,0,0,.08),0 2px 4px rgba(0,0,0,.04);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--ink);font-size:13px;line-height:1.5;min-height:100vh;}
+.topbar{background:var(--ink);color:#fff;padding:0 28px;height:54px;display:flex;align-items:center;justify-content:space-between;gap:16px;position:sticky;top:0;z-index:100;}
+.tb-brand{display:flex;align-items:center;gap:12px;}
+.tb-logo{width:30px;height:30px;border-radius:7px;background:linear-gradient(135deg,var(--accord-mid),var(--hist-mid));display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;flex-shrink:0;}
+.tb-title{font-size:13px;font-weight:600;}
+.tb-sub{font-size:11px;color:#9197ab;}
+.tb-right{display:flex;align-items:center;gap:10px;}
+.badge-date{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);padding:4px 11px;border-radius:20px;font-size:11px;color:#c8ccd8;font-family:'IBM Plex Mono',monospace;}
+.btn{padding:6px 14px;border-radius:7px;font-size:12px;font-family:'IBM Plex Sans',sans-serif;font-weight:500;cursor:pointer;display:flex;align-items:center;gap:6px;transition:all .15s;border:none;}
+.btn-export{background:var(--accord-mid);color:#fff;}.btn-export:hover{background:var(--accord);}
+
+.main{max-width:1320px;margin:0 auto;padding:22px 28px 48px;}
+.kpi-row{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:18px;}
+.kpi-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;box-shadow:var(--shadow);position:relative;overflow:hidden;}
+.kpi-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px;}
+.k-total::before{background:var(--hist-mid);}
+.k-cot::before{background:var(--sem-mid);}
+.k-emi::before{background:var(--accord-mid);}
+.k-accord::before{background:var(--accord-mid);}
+.k-hist::before{background:var(--hist-mid);}
+.k-sem::before{background:var(--sem-mid);}
+.k-div::before{background:var(--div-mid);}
+.kpi-label{font-size:10px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;}
+.kpi-num{font-size:26px;font-weight:600;line-height:1;font-family:'IBM Plex Mono',monospace;}
+.k-total .kpi-num{color:var(--hist-mid);}
+.k-cot .kpi-num{color:var(--sem-mid);}
+.k-emi .kpi-num{color:var(--accord-mid);}
+.k-accord .kpi-num{color:var(--accord-mid);}
+.k-hist .kpi-num{color:var(--hist-mid);}
+.k-sem .kpi-num{color:var(--sem-mid);}
+.k-div .kpi-num{color:var(--div-mid);}
+.kpi-sub{font-size:10px;color:var(--ink4);margin-top:2px;}
+.charts-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:18px;}
+.chart-card{background:var(--surf);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;box-shadow:var(--shadow);}
+.chart-title{font-size:10px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;margin-bottom:10px;}
+.toolbar{background:var(--surf);border:1px solid var(--border);border-radius:var(--rl);padding:10px 14px;margin-bottom:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;box-shadow:var(--shadow);}
+.toolbar-label{font-size:10px;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;flex-shrink:0;}
+.chips{display:flex;gap:5px;flex-wrap:wrap;flex:1;}
+.chip{padding:3px 11px;border-radius:20px;font-size:11px;font-weight:500;cursor:pointer;border:1.5px solid transparent;transition:all .15s;display:flex;align-items:center;gap:4px;}
+.chip-all{background:var(--ink);color:#fff;}.chip-all.off{background:#fff;color:var(--ink3);border-color:var(--border2);}
+.chip-accord{background:var(--accord-bg);color:var(--accord);border-color:var(--accord-light);}.chip-accord.off{background:#fff;color:var(--ink3);border-color:var(--border2);}
+.chip-hist{background:var(--hist-bg);color:var(--hist);border-color:var(--hist-light);}.chip-hist.off{background:#fff;color:var(--ink3);border-color:var(--border2);}
+.chip-sem{background:var(--sem-bg);color:var(--sem);border-color:var(--sem-light);}.chip-sem.off{background:#fff;color:var(--ink3);border-color:var(--border2);}
+.chip-div{background:var(--div-bg);color:var(--div);border-color:var(--div-light);}.chip-div.off{background:#fff;color:var(--ink3);border-color:var(--border2);}
+.chip-rec{background:#f5f3ff;color:#5b21b6;border-color:#ddd6fe;}.chip-rec.off{background:#fff;color:var(--ink3);border-color:var(--border2);}
+.search-wrap{position:relative;}
+.search-wrap input{padding:5px 12px 5px 27px;border-radius:7px;border:1px solid var(--border2);font-size:12px;font-family:'IBM Plex Sans',sans-serif;background:var(--bg);width:190px;outline:none;color:var(--ink);}
+.search-wrap input:focus{border-color:var(--hist-mid);background:#fff;}
+.search-icon{position:absolute;left:8px;top:50%;transform:translateY(-50%);width:12px;height:12px;color:var(--ink4);pointer-events:none;}
+.stats-bar{margin-left:auto;font-size:11px;color:var(--ink4);flex-shrink:0;white-space:nowrap;}
+.stats-bar span{font-weight:600;color:var(--ink2);}
+.alert-banner{background:#fff7ed;border:1px solid var(--sem-light);border-radius:var(--r);padding:9px 14px;margin-bottom:12px;display:flex;align-items:center;gap:9px;font-size:12px;color:#92400e;}
+.hotel-group{margin-bottom:7px;animation:fadeIn .18s ease-out;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:translateY(0)}}
+.hotel-header{background:var(--surf);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;cursor:pointer;transition:box-shadow .15s;box-shadow:var(--shadow);}
+.hotel-header:hover{box-shadow:var(--shadow-md);}
+.hotel-header.open{border-radius:var(--rl) var(--rl) 0 0;border-bottom-color:transparent;}
+.hh-inner{display:grid;grid-template-columns:4px 1fr auto;min-height:54px;}
+.hh-stripe{border-radius:var(--rl) 0 0 var(--rl);}
+.s-accord{background:var(--accord-mid);}.s-hist{background:var(--hist-mid);}.s-sem{background:var(--sem-mid);}.s-div{background:var(--div-mid);}
+.hh-info{padding:9px 13px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0;}
+.hh-names{min-width:150px;}
+.hotel-name{font-size:13px;font-weight:600;color:var(--ink);}
+.hotel-city{font-size:11px;color:var(--ink3);margin-top:1px;}
+.hh-tags{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}
+.tag{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:20px;font-size:11px;font-weight:500;}
+.tag-accord{background:var(--accord-bg);color:var(--accord);border:1px solid var(--accord-light);}
+.tag-hist{background:var(--hist-bg);color:var(--hist);border:1px solid var(--hist-light);}
+.tag-sem{background:var(--sem-bg);color:var(--sem);border:1px solid var(--sem-light);}
+.tag-div{background:var(--div-bg);color:var(--div);border:1px solid var(--div-light);}
+.tag-n{background:var(--bg);color:var(--ink2);border:1px solid var(--border2);}
+.tag-t{background:var(--bg);color:var(--ink2);border:1px solid var(--border2);font-family:'IBM Plex Mono',monospace;font-size:10px;}
+.tag-multi{background:#fff7ed;color:#92400e;border:1px solid #fde68a;}
+.tag-dono{background:#f0fdf9;color:#065f46;border:1px solid #a7f3d0;}
+.tag-cot{background:#fffbeb;color:#92400e;border:1px solid #fde68a;}
+.tag-emi{background:#f0fdf9;color:#065f46;border:1px solid #a7f3d0;}
+.hh-actions{padding:9px 13px;display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.dono-select{appearance:none;-webkit-appearance:none;padding:3px 20px 3px 8px;border-radius:6px;font-size:11px;font-family:'IBM Plex Sans',sans-serif;font-weight:500;cursor:pointer;border:1px solid var(--accord-light);outline:none;background:var(--accord-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%230a6640'/%3E%3C/svg%3E") no-repeat right 5px center;color:var(--accord);min-width:130px;max-width:180px;}
+.dono-label{font-size:10px;color:var(--ink4);text-transform:uppercase;letter-spacing:.06em;font-weight:600;flex-shrink:0;}
+.prog-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:3px;}
+.prog-label{font-size:10px;color:var(--ink4);font-family:'IBM Plex Mono',monospace;}
+.prog-track{width:60px;height:3px;background:var(--bg);border-radius:2px;}
+.prog-fill{height:100%;border-radius:2px;background:var(--accord-mid);transition:width .3s;}
+.chevron{width:14px;height:14px;color:var(--ink4);transition:transform .2s;flex-shrink:0;}
+.chevron.open{transform:rotate(90deg);}
+.ref-panel{border-left:3px solid;padding:8px 13px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:11px;background:var(--bg);}
+.ref-accord{border-color:var(--accord-mid);}.ref-hist{border-color:var(--hist-mid);}.ref-sem{border-color:var(--sem-mid);}.ref-div{border-color:var(--div-mid);}
+.ref-label{font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.06em;font-size:10px;flex-shrink:0;}
+.ref-item{display:flex;align-items:center;gap:3px;color:var(--ink2);}
+.ref-item strong{font-weight:600;font-family:'IBM Plex Mono',monospace;font-size:11px;}
+.ref-em{color:var(--hist-mid);text-decoration:underline;}
+.os-panel{background:var(--surf);border:1px solid var(--border);border-top:none;border-radius:0 0 var(--rl) var(--rl);overflow:hidden;animation:slideDown .16s ease-out;}
+@keyframes slideDown{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:translateY(0)}}
+.os-table{width:100%;border-collapse:collapse;}
+.os-table thead tr{background:var(--bg);}
+.os-table th{padding:6px 11px;text-align:left;font-size:10px;font-weight:600;color:var(--ink4);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);}
+.os-table td{padding:8px 11px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.os-table tr:last-child td{border-bottom:none;}
+.os-table tr.done td{opacity:.45;}.os-table tr.done{background:#f0fdf9;}
+.os-table tr:hover:not(.done) td{background:#f9fafb;}
+.os-num{font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:500;color:var(--hist-mid);background:var(--hist-bg);padding:2px 6px;border-radius:4px;}
+.tc{font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:500;color:var(--ink2);}
+.tc.warn{color:var(--div-mid);}.tc.ok{color:var(--accord-mid);}.tc.empty{color:var(--ink4);font-style:italic;font-family:'IBM Plex Sans';font-size:11px;}
+.cc{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink3);}
+.cc.urgent{color:var(--div-mid);font-weight:600;}
+.sst{appearance:none;-webkit-appearance:none;padding:3px 18px 3px 8px;border-radius:20px;font-size:11px;font-family:'IBM Plex Sans',sans-serif;font-weight:500;cursor:pointer;border:1.5px solid;outline:none;background-repeat:no-repeat;background-position:right 5px center;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236B7280'/%3E%3C/svg%3E");transition:all .15s;}
+.s-pend{background-color:#fef3c7;color:#92400e;border-color:#fde68a;}
+.s-and{background-color:#eff6ff;color:#1e40af;border-color:#bfdbfe;}
+.s-sim{background-color:#d1fae5;color:#065f46;border-color:#a7f3d0;}
+.s-cot{background-color:#fff7ed;color:#92400e;border-color:#fed7aa;}
+.s-emi{background-color:#faf5ff;color:#7e22ce;border-color:#e9d5ff;}
+.il{border:1px solid transparent;border-radius:5px;padding:2px 6px;font-size:12px;font-family:'IBM Plex Sans',sans-serif;color:var(--ink2);background:transparent;width:100%;outline:none;transition:all .15s;}
+.il:hover{background:var(--bg);border-color:var(--border2);}.il:focus{background:#fff;border-color:var(--hist-mid);}
+.il::placeholder{color:var(--ink4);font-style:italic;font-size:11px;}
+.summary{background:var(--ink);color:#9197ab;border-radius:var(--rl);padding:11px 16px;margin-top:18px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;font-size:12px;}
+.summary strong{color:#fff;}
+.empty-state{text-align:center;padding:40px 24px;color:var(--ink4);}
+.pag-bar{display:flex;align-items:center;justify-content:space-between;padding:10px 0 6px;font-size:12px;color:var(--ink3);}
+.pag-btns{display:flex;gap:4px;}
+.pag-btn{padding:4px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surf);cursor:pointer;font-size:11px;font-family:'IBM Plex Sans';color:var(--ink2);transition:all .12s;}
+.pag-btn:hover{background:var(--bg);}.pag-btn.active{background:var(--ink);color:#fff;border-color:var(--ink);}
+@media(max-width:1100px){.kpi-row{grid-template-columns:repeat(3,1fr);}.charts-row{grid-template-columns:1fr 1fr;}}
+@media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr);}.charts-row{grid-template-columns:1fr;}.main{padding:12px;}}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="tb-brand">
+    <div class="tb-logo">EF</div>
+    <div>
+      <div class="tb-title">Hotéis Recorrentes — Painel Operacional v2</div>
+      <div class="tb-sub">Eurofarma · Copastur · 602 grupos · 655 OS · Base 24/04/2026 09h00</div>
+    </div>
+  </div>
+  <div class="tb-right">
+    <div class="badge-date">24/04/2026 · 09h00</div>
+    <div class="badge-date" id="badgeTs" style="cursor:default">Carregando...</div>
+    <button class="btn btn-export" onclick="exportCSV()">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:13px;height:13px"><path d="M2 10v4h12v-4M8 2v8M5 8l3 3 3-3"/></svg>
+      Exportar CSV
+    </button>
+  </div>
+</div>
+<div class="main">
+  <div class="kpi-row">
+    <div class="kpi-card k-total"><div class="kpi-label">Total OS</div><div class="kpi-num">655</div><div class="kpi-sub">602 grupos hotel+cidade</div></div>
+    <div class="kpi-card k-cot"><div class="kpi-label">Ag. Cotação</div><div class="kpi-num">275</div><div class="kpi-sub">buscar/negociar tarifa</div></div>
+    <div class="kpi-card k-emi"><div class="kpi-label">Ag. Emissão</div><div class="kpi-num">380</div><div class="kpi-sub">tarifa ok, emitir</div></div>
+    <div class="kpi-card k-accord"><div class="kpi-label">Acordo Sourcing</div><div class="kpi-num" id="kpi-accord">17</div><div class="kpi-sub">tarifa negociada 2026</div></div>
+    <div class="kpi-card k-hist"><div class="kpi-label">Com Histórico</div><div class="kpi-num" id="kpi-hist">333</div><div class="kpi-sub">referência Vol. Hotel.</div></div>
+    <div class="kpi-card k-sem"><div class="kpi-label">Sem Referência</div><div class="kpi-num" id="kpi-sem">246</div><div class="kpi-sub">cotar do zero</div></div>
+  </div>
+  <div class="charts-row">
+    <div class="chart-card">
+      <div class="chart-title">Classificação dos grupos</div>
+      <div style="position:relative;height:140px"><canvas id="chartTipo"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Status operacional das OS</div>
+      <div style="position:relative;height:140px"><canvas id="chartProg"></canvas></div>
+      <div id="prog-legend" style="display:flex;gap:10px;margin-top:6px;flex-wrap:wrap;"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Fragmentação de consultores</div>
+      <div style="position:relative;height:140px"><canvas id="chartMulti"></canvas></div>
+      <div id="multi-legend" style="font-size:11px;color:var(--ink4);margin-top:6px;"></div>
+    </div>
+  </div>
+  <div class="alert-banner" id="multiAlert" style="display:none">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0"><path d="M8 2L1 14h14L8 2z"/><path d="M8 7v3M8 12v.5"/></svg>
+    <span id="multiAlertText"></span>
+  </div>
+  <div class="toolbar">
+    <span class="toolbar-label">Filtrar</span>
+    <div class="chips">
+      <span class="chip chip-all"      onclick="setFilter('all',this)">Todos</span>
+      <span class="chip chip-accord off" onclick="setFilter('acordo',this)"><span style="width:6px;height:6px;border-radius:50%;background:var(--accord-mid);display:inline-block"></span>Acordo (17)</span>
+      <span class="chip chip-hist off"  onclick="setFilter('historico',this)"><span style="width:6px;height:6px;border-radius:50%;background:var(--hist-mid);display:inline-block"></span>Histórico (333)</span>
+      <span class="chip chip-sem off"   onclick="setFilter('sem_ref',this)"><span style="width:6px;height:6px;border-radius:50%;background:var(--sem-mid);display:inline-block"></span>Sem Ref. (246)</span>
+      <span class="chip chip-div off"   onclick="setFilter('div',this)"><span style="width:6px;height:6px;border-radius:50%;background:var(--div-mid);display:inline-block"></span>Divergência (6)</span>
+      <span class="chip chip-rec off"   onclick="setFilter('rec',this)"><span style="width:6px;height:6px;border-radius:50%;background:#7c3aed;display:inline-block"></span>Recorrentes (2+ OS)</span>
+    </div>
+    <div class="search-wrap">
+      <svg class="search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="4"/><path d="M10.5 10.5l3 3"/></svg>
+      <input type="text" id="searchInput" placeholder="Hotel, consultor, cidade…" oninput="goPage(1);renderGroups()">
+    </div>
+    <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3);cursor:pointer;flex-shrink:0;">
+      <input type="checkbox" id="filterMulti" onchange="goPage(1);renderGroups()">
+      Só múltiplos consultores
+    </label>
+    <div class="stats-bar">Mostrando <span id="statsCount">—</span> grupos · <span id="statsOS">—</span> OS</div>
+  </div>
+  <div class="pag-bar">
+    <span id="pagInfo" style="color:var(--ink4);font-size:11px;"></span>
+    <div class="pag-btns" id="pagBtns"></div>
+  </div>
+  <div id="hotelList"></div>
+  <div id="emptyState" class="empty-state" style="display:none">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:32px;height:32px;margin:0 auto 8px;display:block;opacity:.3"><path d="M3 7h18M3 12h18M3 17h12"/></svg>
+    Nenhum resultado para os filtros aplicados.
+  </div>
+  <div class="summary">
+    <span>Copastur · Eurofarma · 24/04/2026 09h00</span>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+      <span>Concluído: <strong id="sumSim">0</strong></span>
+      <span>Em andamento: <strong id="sumAnd">0</strong></span>
+      <span>Pendente: <strong id="sumPend">0</strong></span>
+    </div>
+    <span id="sumPct" style="font-family:'IBM Plex Mono',monospace;color:#4ade80;font-weight:600">0% concluído</span>
+  </div>
+</div>
+<script src="data.js"></script>
+<script>
+
+const ORDER = {div:0,sem_ref:1,historico:2,acordo:3};
+DATA.sort((a,b) => {
+  // Recorrentes (2+ OS) primeiro dentro de cada tipo
+  const aRec = a.os.length >= 2 ? 0 : 1;
+  const bRec = b.os.length >= 2 ? 0 : 1;
+  if(ORDER[a.tipo] !== ORDER[b.tipo]) return ORDER[a.tipo] - ORDER[b.tipo];
+  if(aRec !== bRec) return aRec - bRec;
+  return a.h.localeCompare(b.h,'pt-BR');
+});
+
+const STATE = {};
+DATA.forEach(g => g.os.forEach(o => { STATE[o.n] = {status:'Pendente',resp:'',obs:''}; }));
+const DONO = {};
+DATA.forEach((g,i) => { DONO[i] = g.dono || ''; });
+
+const OPEN = new Set();
+let currentFilter = 'all';
+let currentPage = 1;
+const PAGE_SIZE = 50;
+
+// Persistência localStorage
+function loadPersisted() {
+  DATA.forEach((g,i) => {
+    try { const d = localStorage.getItem('ef2_dono_'+i); if(d!==null) DONO[i]=d; } catch(e){}
+    g.os.forEach(o => {
+      try { const s = localStorage.getItem('ef2_st_'+o.n); if(s) Object.assign(STATE[o.n],JSON.parse(s)); } catch(e){}
+    });
+  });
+  // Exibe timestamp da última geração (vem do data.js)
+  if(typeof DATA_TIMESTAMP !== 'undefined') {
+    const el = document.getElementById('badgeTs');
+    if(el) el.textContent = DATA_TIMESTAMP;
+    // Atualiza também o sub e a barra do sumário
+    const sub = document.querySelector('.tb-sub');
+    if(sub) sub.textContent = `Eurofarma · Copastur · ${DATA.length} grupos · ${DATA.reduce((s,g)=>s+g.os.length,0)} OS · ${DATA_TIMESTAMP}`;
+    const sum = document.querySelector('.summary span');
+    if(sum) sum.textContent = `Copastur · Eurofarma · ${DATA_TIMESTAMP}`;
+  }
+}
+
+function tipoLabel(t){ return {acordo:'Acordo Vigente',historico:'Histórico',sem_ref:'Sem Referência',div:'Divergência'}[t]||t; }
+function tipoCls(t){ return {acordo:'tag-accord',historico:'tag-hist',sem_ref:'tag-sem',div:'tag-div'}[t]||'tag-n'; }
+function stripeClass(t){ return {acordo:'s-accord',historico:'s-hist',sem_ref:'s-sem',div:'s-div'}[t]||'s-sem'; }
+function isUrgent(d){ if(!d)return false; const[dd,mm]=d.split('/').map(Number); return mm<=4&&dd<=30; }
+function groupProg(g){ const done=g.os.filter(o=>STATE[o.n].status==='Sim').length; return{done,total:g.os.length,pct:Math.round(done/g.os.length*100)}; }
+
+function getFiltered() {
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const filterMulti = document.getElementById('filterMulti').checked;
+  return DATA.filter((g,i) => {
+    if(currentFilter==='rec' && g.os.length<2) return false;
+    if(currentFilter!=='all'&&currentFilter!=='rec'&&g.tipo!==currentFilter) return false;
+    if(search){ const hay=(g.h+g.c+g.os.map(o=>o.cons).join(' ')+DONO[i]).toLowerCase(); if(!hay.includes(search))return false; }
+    if(filterMulti&&!g.mc)return false;
+    return true;
+  });
+}
+
+function getAllConsultores() {
+  const set = new Set(); DATA.forEach(g=>g.os.forEach(o=>set.add(o.cons))); return [...set].sort();
+}
+
+function renderRef(g) {
+  if(g.src && (g.src.ti||g.src.em)) {
+    let items = '';
+    if(g.src.ti) items+=`<span class="ref-item">Tarifa ind.: <strong>R$ ${g.src.ti}</strong></span>`;
+    if(g.src.td) items+=`<span class="ref-item">Duplo: <strong>R$ ${g.src.td}</strong></span>`;
+    if(g.src.tt) items+=`<span class="ref-item">${g.src.tt}</span>`;
+    if(g.src.cond) items+=`<span class="ref-item"><strong>${g.src.cond}</strong></span>`;
+    if(g.src.cafe&&g.src.cafe==='Sim') items+=`<span class="ref-item">☕ Café incluso</span>`;
+    if(g.src.bk) items+=`<span class="ref-item" style="color:var(--div-mid)">⚠ Blackout: ${g.src.bk}</span>`;
+    if(g.src.em) items+=`<span class="ref-item"><a href="mailto:${g.src.em}" class="ref-em">${g.src.em}</a></span>`;
+    return `<div class="ref-panel ref-accord"><span class="ref-label">Sourcing 2026</span>${items}</div>`;
+  }
+  if(g.tipo==='historico'||(g.tipo==='div'&&g.tr)) {
+    let items='';
+    if(g.tr) items+=`<span class="ref-item">Tarifa média histórica: <strong>R$ ${g.tr}</strong></span>`;
+    if(g.ht&&g.ht.length>1) items+=`<span class="ref-item">Faixa: <strong>R$ ${g.ht[0]}–R$ ${g.ht[g.ht.length-1]}</strong></span>`;
+    if(g.nrh) items+=`<span class="ref-item">${g.nrh} reservas · ${g.nem} consultores no histórico</span>`;
+    const cls=g.tipo==='div'?'ref-div':'ref-hist';
+    return `<div class="ref-panel ${cls}"><span class="ref-label">${g.tipo==='div'?'Divergência · Ref. Histórico':'Vol. Hotelaria 2026'}</span>${items}</div>`;
+  }
+  if(g.tipo==='sem_ref') {
+    return `<div class="ref-panel ref-sem"><span class="ref-label">Sem Referência</span><span class="ref-item" style="color:var(--sem-mid)">Nenhum acordo ou histórico encontrado. Cotar do zero. Candidato ao próximo Sourcing.</span></div>`;
+  }
+  return '';
+}
+
+function goPage(p){ currentPage=p; renderGroups(); }
+
+function renderGroups() {
+  const filtered = getFiltered();
+  const total = filtered.length;
+  const totalOS = filtered.reduce((s,g)=>s+g.os.length,0);
+  document.getElementById('statsCount').textContent = total;
+  document.getElementById('statsOS').textContent = totalOS;
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if(currentPage > totalPages) currentPage = totalPages;
+  const start = (currentPage-1)*PAGE_SIZE;
+  const page = filtered.slice(start, start+PAGE_SIZE);
+
+  // Paginação
+  document.getElementById('pagInfo').textContent = total > PAGE_SIZE
+    ? `Página ${currentPage} de ${totalPages} · ${total} grupos`
+    : `${total} grupos`;
+  const btns = document.getElementById('pagBtns');
+  btns.innerHTML = '';
+  if(totalPages > 1) {
+    const makeBtn = (label, pg) => {
+      const b = document.createElement('button');
+      b.className = 'pag-btn' + (pg===currentPage?' active':'');
+      b.textContent = label;
+      b.onclick = ()=>goPage(pg);
+      return b;
+    };
+    if(currentPage>1) btns.appendChild(makeBtn('‹',currentPage-1));
+    const from = Math.max(1,currentPage-2), to = Math.min(totalPages,currentPage+2);
+    for(let p=from;p<=to;p++) btns.appendChild(makeBtn(p,p));
+    if(currentPage<totalPages) btns.appendChild(makeBtn('›',currentPage+1));
+  }
+
+  // Multi alert
+  const mc = DATA.filter(g=>g.mc).length;
+  const alert = document.getElementById('multiAlert');
+  if(mc>0){ alert.style.display='flex'; document.getElementById('multiAlertText').innerHTML=`<strong>${mc} grupos</strong> com múltiplos consultores neste ciclo. Use "Responsável" para centralizar e evitar retrabalho.`; }
+
+  const list = document.getElementById('hotelList');
+  const empty = document.getElementById('emptyState');
+  if(!page.length){ list.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display='none';
+  const allCons = getAllConsultores();
+
+  list.innerHTML = page.map(g => {
+    const idx = DATA.indexOf(g);
+    const isOpen = OPEN.has(idx);
+    const prog = groupProg(g);
+    const cot = g.os.filter(o=>o.q==='Cotação').length;
+    const emi = g.os.filter(o=>o.q==='Emissão').length;
+    const donoVal = DONO[idx];
+    const consSet = [...new Set(g.os.map(o=>o.cons))];
+
+    const osRows = g.os.map(o => {
+      const st = STATE[o.n];
+      const done = st.status==='Sim';
+      const sMap={'Pendente':'s-pend','Em andamento':'s-and','Sim':'s-sim','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
+      const tarRef = g.tr;
+      let tarCls='';
+      if(!o.t) tarCls='empty';
+      else if(tarRef&&Math.abs(o.t-tarRef)>tarRef*0.12) tarCls='warn';
+      else if(tarRef) tarCls='ok';
+      const urgCls = isUrgent(o.d)?'urgent':'';
+      const hospStr = o.hosp ? `<span style="font-size:11px;color:var(--ink4)">${o.hosp}</span>` : '';
+      return `<tr class="${done?'done':''}">
+        <td><span class="os-num">#${o.n}</span></td>
+        <td>
+          <div style="font-size:12px;color:#374151;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${o.cons}">${o.cons}</div>
+          ${hospStr}
+        </td>
+        <td><span class="tag ${o.q==='Emissão'?'tag-emi':'tag-cot'}">${o.q}</span></td>
+        <td style="font-size:12px;${o.apto&&o.apto!=='Individual'?'font-weight:600;color:var(--hist-mid)':'color:var(--ink4)'}">${o.apto||'Individual'}</td>
+        <td class="tc ${tarCls}">${o.t?'R$ '+o.t:'—'}</td>
+        <td class="cc ${urgCls}">${o.d}</td>
+        <td><div style="display:flex;justify-content:center;">
+          <select class="sst ${sMap[st.status]||'s-pend'}" onchange="setStatus(${o.n},this)">
+            <option ${st.status==='Pendente'?'selected':''}>Pendente</option>
+            <option ${st.status==='Cotação hotel'?'selected':''}>Cotação hotel</option>
+            <option ${st.status==='Em andamento'?'selected':''}>Em andamento</option>
+            <option ${st.status==='Ag. confirmação'?'selected':''}>Ag. confirmação</option>
+            <option ${st.status==='Sim'?'selected':''}>Sim ✓</option>
+          </select>
+        </div></td>
+        <td><input class="il" placeholder="Responsável OS…" value="${st.resp}" onchange="setResp(${o.n},this.value)" style="min-width:90px"></td>
+        <td style="min-width:150px"><input class="il" placeholder="Observação / localizador…" value="${st.obs}" onchange="setObs(${o.n},this.value)"></td>
+      </tr>`;
+    }).join('');
+
+    const donoOptions = ['', ...allCons].map(c =>
+      `<option value="${c}" ${c===donoVal?'selected':''}>${c||'— Sem responsável —'}</option>`
+    ).join('');
+
+    const multiTag = g.mc ? `<span class="tag tag-multi">⚑ ${consSet.length} consultores</span>` : '';
+    const tarifaTag = g.tr ? `<span class="tag tag-t">Ref. R$ ${g.tr}</span>` : '';
+    const donoTag = donoVal ? `<span class="tag tag-dono">👤 ${donoVal}</span>` : '';
+    const recTag = g.os.length >= 2 ? `<span class="tag" style="background:#f5f3ff;color:#5b21b6;border:1px solid #ddd6fe">${g.os.length} OS</span>` : `<span class="tag tag-n">1 OS</span>`;
+
+    return `<div class="hotel-group" id="grp-${idx}">
+      <div class="hotel-header ${isOpen?'open':''}" id="hdr-${idx}" onclick="toggleGroup(${idx})">
+        <div class="hh-inner">
+          <div class="hh-stripe ${stripeClass(g.tipo)}"></div>
+          <div class="hh-info">
+            <div class="hh-names">
+              <div class="hotel-name">${g.h}</div>
+              <div class="hotel-city">${g.c}</div>
+            </div>
+            <div class="hh-tags">
+              <span class="tag ${tipoCls(g.tipo)}">${tipoLabel(g.tipo)}</span>
+              ${recTag}
+              ${cot?`<span class="tag tag-cot">${cot} cot.</span>`:''}
+              ${emi?`<span class="tag tag-emi">${emi} emi.</span>`:''}
+              ${tarifaTag}
+              ${multiTag}
+              ${donoTag}
+            </div>
+          </div>
+          <div class="hh-actions" onclick="event.stopPropagation()">
+            <span class="dono-label">Responsável</span>
+            <select class="dono-select" onchange="setDono(${idx},this.value)">
+              ${donoOptions}
+            </select>
+            ${prog.total>0?`<div class="prog-wrap"><div class="prog-label">${prog.done}/${prog.total}</div><div class="prog-track"><div class="prog-fill" style="width:${prog.pct}%"></div></div></div>`:''}
+            <svg class="chevron ${isOpen?'open':''}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 4l4 4-4 4"/></svg>
+          </div>
+        </div>
+      </div>
+      ${isOpen?`
+      ${renderRef(g)}
+      <div class="os-panel">
+        <table class="os-table">
+          <thead><tr>
+            <th style="width:80px">Nº OS</th>
+            <th>Consultor / Hóspede</th>
+            <th style="width:85px">Tipo OS</th>
+            <th style="width:68px">Apto</th>
+            <th style="width:75px">Tarifa</th>
+            <th style="width:65px">Check-in</th>
+            <th style="width:135px;text-align:center">Status</th>
+            <th style="width:110px">Responsável OS</th>
+            <th>Observação</th>
+          </tr></thead>
+          <tbody>${osRows}</tbody>
+        </table>
+      </div>`:''}
+    </div>`;
+  }).join('');
+
+  updateSummary();
+  updateCharts();
+}
+
+function toggleGroup(idx){ if(OPEN.has(idx))OPEN.delete(idx);else OPEN.add(idx); renderGroups(); }
+function setDono(idx,val){ DONO[idx]=val; try{localStorage.setItem('ef2_dono_'+idx,val);}catch(e){} renderGroups(); }
+function setStatus(n,sel){
+  const val=sel.value.replace(' ✓',''); STATE[n].status=val;
+  const map={'Pendente':'s-pend','Em andamento':'s-and','Sim':'s-sim','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
+  sel.className=`sst ${map[val]||'s-pend'}`;
+  const row=sel.closest('tr'); if(val==='Sim')row.classList.add('done');else row.classList.remove('done');
+  updateProgBar(sel); updateSummary(); updateCharts();
+  try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}
+}
+function updateProgBar(el){
+  const panel=el.closest('.os-panel'); if(!panel)return;
+  const grp=panel.previousElementSibling; if(!grp)return;
+  const rows=panel.querySelectorAll('tbody tr');
+  const done=[...rows].filter(r=>r.classList.contains('done')).length;
+  const pf=grp.querySelector('.prog-fill'); const pl=grp.querySelector('.prog-label');
+  if(pf)pf.style.width=Math.round(done/rows.length*100)+'%';
+  if(pl)pl.textContent=`${done}/${rows.length}`;
+}
+function setResp(n,v){STATE[n].resp=v;try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}}
+function setObs(n,v){STATE[n].obs=v;try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}}
+function setFilter(f,el){ currentFilter=f; currentPage=1;
+  document.querySelectorAll('.chip').forEach(c=>{const mine=c.getAttribute('onclick').includes(`'${f}'`);if(mine)c.classList.remove('off');else c.classList.add('off');});
+  renderGroups();
+}
+function updateSummary(){
+  const all=Object.values(STATE);
+  const sim=all.filter(s=>s.status==='Sim').length;
+  document.getElementById('sumSim').textContent=sim;
+  document.getElementById('sumAnd').textContent=all.filter(s=>s.status==='Em andamento').length;
+  document.getElementById('sumPend').textContent=all.filter(s=>s.status==='Pendente').length;
+  document.getElementById('sumPct').textContent=Math.round(sim/all.length*100)+'% concluído';
+}
+let cTipo,cProg,cMulti;
+function initCharts(){
+  const tipos=['acordo','historico','sem_ref','div'];
+  const labels=['Acordo','Histórico','Sem Ref.','Divergência'];
+  const colors=['#12a05e','#2563eb','#d97706','#dc2626'];
+  const counts=tipos.map(t=>DATA.filter(g=>g.tipo===t).length);
+  cTipo=new Chart(document.getElementById('chartTipo'),{type:'bar',
+    data:{labels,datasets:[{data:counts,backgroundColor:colors,borderRadius:5,borderSkipped:false}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},
+      scales:{x:{grid:{display:false},ticks:{font:{size:10}}},y:{grid:{color:'#f0f1f5'},ticks:{font:{size:10,family:'IBM Plex Mono'},stepSize:50}}}}
+  });
+  updateProgressChart();
+  const mc=DATA.filter(g=>g.mc).length;
+  cMulti=new Chart(document.getElementById('chartMulti'),{type:'doughnut',
+    data:{labels:['Múltiplos consultores','Consultor único'],
+          datasets:[{data:[mc,DATA.length-mc],backgroundColor:['#d97706','#12a05e'],borderWidth:0,hoverOffset:4}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{display:false}}}
+  });
+  document.getElementById('multi-legend').innerHTML=
+    `<span style="color:#d97706">■</span> ${mc} com múltiplos consultores &nbsp;<span style="color:#12a05e">■</span> ${DATA.length-mc} com consultor único`;
+}
+function updateProgressChart(){
+  const all=Object.values(STATE);
+  const vals=[all.filter(s=>s.status==='Sim').length,all.filter(s=>s.status==='Em andamento').length,
+    all.filter(s=>s.status==='Cotação hotel').length,all.filter(s=>s.status==='Ag. confirmação').length,
+    all.filter(s=>s.status==='Pendente').length];
+  const lbls=['Concluído','Em andamento','Cotação hotel','Ag. confirmação','Pendente'];
+  const clrs=['#12a05e','#2563eb','#d97706','#7c3aed','#d1d5db'];
+  if(cProg){cProg.data.datasets[0].data=vals;cProg.update();}
+  else{cProg=new Chart(document.getElementById('chartProg'),{type:'doughnut',
+    data:{labels:lbls,datasets:[{data:vals,backgroundColor:clrs,borderWidth:0,hoverOffset:4}]},
+    options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{display:false}}}
+  });}
+  document.getElementById('prog-legend').innerHTML=lbls.map((l,i)=>
+    `<span style="display:flex;align-items:center;gap:3px;font-size:10px;color:#6b7280">
+      <span style="width:7px;height:7px;border-radius:2px;background:${clrs[i]};display:inline-block"></span>
+      ${l} <strong style="color:#111">${vals[i]}</strong></span>`).join('');
+}
+function updateCharts(){updateProgressChart();}
+function exportCSV(){
+  const rows=[['Hotel','Cidade','Classificação','Nº OS','Consultor (Argo)','Hóspede','Tipo Apto','Responsável Hotel','Tipo OS','Tarifa OS','Tarifa Ref.','Check-in','Status','Responsável OS','Observação','Obs. Original']];
+  DATA.forEach((g,i)=>g.os.forEach(o=>{
+    const st=STATE[o.n];
+    rows.push([g.h,g.c,tipoLabel(g.tipo),o.n,o.cons,o.hosp,o.apto||'Individual',DONO[i]||'',o.q,o.t?'R$ '+o.t:'',g.tr?'R$ '+g.tr:'',o.d,st.status,st.resp,st.obs,o.obs_orig]);
+  }));
+  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a=document.createElement('a');
+  a.href='data:text/csv;charset=utf-8,\uFEFF'+encodeURIComponent(csv);
+  a.download='HoteisEurofarma_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.click();
+}
+
+
+loadPersisted();
+renderGroups();
+initCharts();
+</script>
+</body>
+</html>
