@@ -164,12 +164,12 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--ink
 </div>
 <div class="main">
   <div class="kpi-row">
-    <div class="kpi-card k-total"><div class="kpi-label">Total OS</div><div class="kpi-num">655</div><div class="kpi-sub">602 grupos hotel+cidade</div></div>
-    <div class="kpi-card k-cot"><div class="kpi-label">Ag. Cotação</div><div class="kpi-num">275</div><div class="kpi-sub">buscar/negociar tarifa</div></div>
-    <div class="kpi-card k-emi"><div class="kpi-label">Ag. Emissão</div><div class="kpi-num">380</div><div class="kpi-sub">tarifa ok, emitir</div></div>
-    <div class="kpi-card k-accord"><div class="kpi-label">Acordo Sourcing</div><div class="kpi-num" id="kpi-accord">17</div><div class="kpi-sub">tarifa negociada 2026</div></div>
-    <div class="kpi-card k-hist"><div class="kpi-label">Com Histórico</div><div class="kpi-num" id="kpi-hist">333</div><div class="kpi-sub">referência Vol. Hotel.</div></div>
-    <div class="kpi-card k-sem"><div class="kpi-label">Sem Referência</div><div class="kpi-num" id="kpi-sem">246</div><div class="kpi-sub">cotar do zero</div></div>
+    <div class="kpi-card k-total"><div class="kpi-label">Total OS</div><div class="kpi-num" id="kpiTotalOS">—</div><div class="kpi-sub" id="kpiTotalGrupos">—</div></div>
+    <div class="kpi-card k-cot"><div class="kpi-label">Ag. Cotação</div><div class="kpi-num" id="kpiCot">—</div><div class="kpi-sub">buscar/negociar tarifa</div></div>
+    <div class="kpi-card k-emi"><div class="kpi-label">Ag. Emissão</div><div class="kpi-num" id="kpiEmi">—</div><div class="kpi-sub">tarifa ok, emitir</div></div>
+    <div class="kpi-card k-accord"><div class="kpi-label">Acordo Sourcing</div><div class="kpi-num" id="kpi-accord">—</div><div class="kpi-sub">tarifa negociada 2026</div></div>
+    <div class="kpi-card k-hist"><div class="kpi-label">Com Histórico</div><div class="kpi-num" id="kpi-hist">—</div><div class="kpi-sub">referência Vol. Hotel.</div></div>
+    <div class="kpi-card k-sem"><div class="kpi-label">Sem Referência</div><div class="kpi-num" id="kpi-sem">—</div><div class="kpi-sub">cotar do zero</div></div>
   </div>
   <div class="charts-row">
     <div class="chart-card">
@@ -560,6 +560,7 @@ function exportCSV(){
 
 
 loadPersisted();
+atualizarKPIs();
 renderGroups();
 initCharts();
 </script>
