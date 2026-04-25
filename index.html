@@ -268,6 +268,19 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);font-s
 
 @media(max-width:1100px){.kpi-row{grid-template-columns:repeat(3,1fr);}.charts-row{grid-template-columns:1fr 1fr;}}
 @media(max-width:640px){.kpi-row{grid-template-columns:repeat(2,1fr);}.charts-row{grid-template-columns:1fr;}.main{padding:12px;}}
+
+/* ── URGÊNCIA ── */
+.tag-critico{background:#FEE2E2;color:#991B1B;border:1px solid #FECACA;animation:pulse 1.5s infinite;}
+.tag-urgente{background:#FEF3C7;color:#92400E;border:1px solid #FDE68A;}
+.chip-critico{background:#FEE2E2;color:#991B1B;border-color:#FECACA;}
+.chip-critico.off{background:#fff;color:var(--ink3);border-color:var(--border2);}
+.chip-urgente{background:#FEF3C7;color:#92400E;border-color:#FDE68A;}
+.chip-urgente.off{background:#fff;color:var(--ink3);border-color:var(--border2);}
+.cc.critico{color:#991B1B;font-weight:700;background:#FEE2E2;padding:1px 5px;border-radius:4px;}
+.cc.urgente{color:#92400E;font-weight:600;background:#FEF3C7;padding:1px 5px;border-radius:4px;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.hotel-header.urgencia-critico{border-left:3px solid #DC2626 !important;}
+.hotel-header.urgencia-urgente{border-left:3px solid #D97706 !important;}
 </style>
 </head>
 <body>
@@ -370,6 +383,8 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);font-s
         <span class="chip chip-rec off" onclick="setFilter('rec',this)"><span class="dot" style="background:var(--purple)"></span>Recorrentes (2+ OS)</span>
         <span class="chip chip-cotacao off" onclick="setFilter('cot_os',this)"><span class="dot" style="background:var(--amber)"></span>Ag. Cotação</span>
         <span class="chip chip-emissao off" onclick="setFilter('emi_os',this)"><span class="dot" style="background:var(--green)"></span>Ag. Emissão</span>
+        <span class="chip chip-critico off" onclick="setFilter('critico',this)"><span class="dot" style="background:#DC2626"></span>🔴 Crítico (hoje/amanhã)</span>
+        <span class="chip chip-urgente off" onclick="setFilter('urgente',this)"><span class="dot" style="background:#D97706"></span>🟡 Urgente (2-3 dias)</span>
       </div>
       <div class="search-wrap">
         <svg class="search-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="4"/><path d="M10.5 10.5l3 3"/></svg>
@@ -731,6 +746,8 @@ function getFiltered() {
     if(currentFilter==='rec' && g.os.length<2) return false;
     if(currentFilter==='cot_os' && !g.os.some(o=>o.q==='Cotação')) return false;
     if(currentFilter==='emi_os' && !g.os.some(o=>o.q==='Emissão')) return false;
+    if(currentFilter==='critico' && getUrgenciaGrupo(g) !== 'critico') return false;
+    if(currentFilter==='urgente' && !['critico','urgente'].includes(getUrgenciaGrupo(g))) return false;
     if(currentFilter!=='all'&&currentFilter!=='rec'&&currentFilter!=='cot_os'&&currentFilter!=='emi_os'&&g.tipo!==currentFilter) return false;
     if(search){ const hay=(g.h+g.c+g.os.map(o=>o.cons).join(' ')+DONO[i]).toLowerCase(); if(!hay.includes(search))return false; }
     if(filterMulti&&!g.mc)return false;
@@ -834,6 +851,7 @@ function renderGroups() {
     const cot = g.os.filter(o=>o.q==='Cotação').length;
     const emi = g.os.filter(o=>o.q==='Emissão').length;
     const donoVal = DONO[idx];
+    const urgGrupo = getUrgenciaGrupo(g);
     const consSet = [...new Set(g.os.map(o=>o.cons))];
 
     const osRows = g.os.filter(o => STATE[o.n].status !== 'Sim').map(o => {
@@ -845,7 +863,10 @@ function renderGroups() {
       if(!o.t) tarCls='empty';
       else if(tarRef&&Math.abs(o.t-tarRef)>tarRef*0.12) tarCls='warn';
       else if(tarRef) tarCls='ok';
-      const urgCls = isUrgent(o.d)?'urgent':'';
+      const diasOS = getDiasParaCheckin(o.d);
+      const urgOS = getUrgenciaOS(o);
+      const urgCls = urgOS === 'critico' ? 'critico' : urgOS === 'urgente' ? 'urgente' : '';
+      const urgOsLabel = urgOS === 'critico' ? ' 🔴' : urgOS === 'urgente' ? ' 🟡' : '';
       const hospStr = o.hosp ? `<span style="font-size:11px;color:var(--ink4)">${o.hosp}</span>` : '';
       return `<tr class="${done?'done':''}">
         <td><span class="os-num">#${o.n}</span></td>
@@ -856,7 +877,7 @@ function renderGroups() {
         <td><span class="tag ${o.q==='Emissão'?'tag-emi':'tag-cot'}">${o.q}</span></td>
         <td style="font-size:12px;${o.apto&&o.apto!=='Individual'?'font-weight:600;color:var(--hist-mid)':'color:var(--ink4)'}">${o.apto||'Individual'}</td>
         <td class="tc ${tarCls}">${o.t?'R$ '+o.t:'—'}</td>
-        <td class="cc ${urgCls}">${o.d}</td>
+        <td><span class="cc ${urgCls}">${o.d}${urgOsLabel}</span></td>
         <td><div style="display:flex;justify-content:center;">
           <select class="sst ${sMap[st.status]||'s-pend'}" onchange="setStatus(${o.n},this)">
             <option ${st.status==='Pendente'?'selected':''}>Pendente</option>
@@ -895,6 +916,7 @@ function renderGroups() {
               ${tarifaTag}
               ${multiTag}
               ${donoTag}
+              ${urgGrupo === 'critico' ? '<span class="tag tag-critico">🔴 Check-in hoje/amanhã</span>' : urgGrupo === 'urgente' ? '<span class="tag tag-urgente">🟡 2-3 dias</span>' : ''}
             </div>
           </div>
           <div class="hh-actions" onclick="event.stopPropagation()">
@@ -1043,98 +1065,142 @@ function renderConsultores() {
   const container = document.getElementById('consultores-content');
   if(!container) return;
 
-  // Agrupar OS por consultor (dono do hotel ou consultor do Argo)
+  // Agrupar por consultor responsável (dono do hotel tem prioridade)
   const consMap = {};
   DATA.forEach((g,i) => {
+    const dono = DONO[i];
     g.os.forEach(o => {
-      const cons = DONO[i] || o.cons;
-      if(!consMap[cons]) consMap[cons] = {nome:cons, total:0, cot:0, emi:0, cotHotel:0, agConf:0, pendente:0};
-      consMap[cons].total++;
-      if(o.q==='Cotação') consMap[cons].cot++;
-      else consMap[cons].emi++;
-      const st = STATE[o.n].status;
-      if(st==='Cotação hotel') consMap[cons].cotHotel++;
-      else if(st==='Ag. confirmação') consMap[cons].agConf++;
-      else consMap[cons].pendente++;
+      const cons = dono || o.cons;
+      if(!cons) return;
+      if(!consMap[cons]) consMap[cons] = {
+        nome: cons, total: 0, cot: 0, emi: 0,
+        cotHotel: 0, agConf: 0, pendente: 0,
+        critico: 0, urgente: 0,
+        hoteis: new Set(), grupos: 0
+      };
+      const c = consMap[cons];
+      c.total++;
+      if(o.q==='Cotação') c.cot++; else c.emi++;
+      const st = STATE[o.n]?.status || 'Pendente';
+      if(st==='Cotação hotel') c.cotHotel++;
+      else if(st==='Ag. confirmação') c.agConf++;
+      else if(st!=='Sim') c.pendente++;
+      // Urgência
+      const urg = getUrgenciaOS(o);
+      if(urg==='critico') c.critico++;
+      else if(urg==='urgente') c.urgente++;
+      // Hotéis únicos
+      c.hoteis.add(g.h + '||' + g.c);
     });
   });
 
-  let sorted = Object.values(consMap).sort((a,b)=>b.total-a.total);
+  // Filtro
+  let filtered = Object.values(consMap);
+  if(consFilter === 'cot') filtered = filtered.filter(c=>c.cot>0);
+  else if(consFilter === 'emi') filtered = filtered.filter(c=>c.emi>0);
+  else if(consFilter === 'critico') filtered = filtered.filter(c=>c.critico>0||c.urgente>0);
 
-  // Aplicar filtro
-  if(consFilter === 'cot') sorted = sorted.filter(c => c.cot > 0);
-  else if(consFilter === 'emi') sorted = sorted.filter(c => c.emi > 0);
-  const maxTotal = sorted[0]?.total || 1;
+  // Ordenar por total desc
+  filtered.sort((a,b) => b.total - a.total);
+  const maxTotal = filtered[0]?.total || 1;
 
-  const allCons = Object.values(consMap);
-  const totalCot = allCons.reduce((s,c)=>s+c.cot,0);
-  const totalEmi = allCons.reduce((s,c)=>s+c.emi,0);
+  // KPIs
+  const totalCons = filtered.length;
+  const totalOS = filtered.reduce((s,c)=>s+c.total,0);
+  const mediaOS = Math.round(totalOS/totalCons) || 0;
+  const maisCarregado = filtered[0]?.nome.split(' ').slice(0,2).join(' ') || '—';
+  const comCritico = filtered.filter(c=>c.critico>0||c.urgente>0).length;
 
-  const kpiRow = `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px;">
-      <div class="kpi-card k-total"><div class="kpi-label">Consultores</div><div class="kpi-num" style="color:#2563eb">${sorted.length}</div><div class="kpi-sub">com OS ativas</div></div>
-      <div class="kpi-card k-cot"><div class="kpi-label">Média por consultor</div><div class="kpi-num" style="color:#d97706">${Math.round(DATA.reduce((s,g)=>s+g.os.length,0)/allCons.length||0)}</div><div class="kpi-sub">OS por consultor</div></div>
-      <div class="kpi-card k-emi"><div class="kpi-label">Mais carregado</div><div class="kpi-num" style="color:#12a05e;font-size:14px;margin-top:4px">${Object.values(consMap).sort((a,b)=>b.total-a.total)[0]?.nome.split(' ')[0]||'—'}</div><div class="kpi-sub">${Object.values(consMap).sort((a,b)=>b.total-a.total)[0]?.total||0} OS</div></div>
-      <div class="kpi-card k-accord"><div class="kpi-label">Múlt. consultores</div><div class="kpi-num" style="color:#059669">${DATA.filter(g=>g.mc).length}</div><div class="kpi-sub">grupos fragmentados</div></div>
+  const kpiHtml = `
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px">
+      <div class="kpi blue"><div class="kpi-lbl">Consultores</div><div class="kpi-val">${totalCons}</div><div class="kpi-sub">com OS ativas</div></div>
+      <div class="kpi amber"><div class="kpi-lbl">Total OS</div><div class="kpi-val">${totalOS}</div><div class="kpi-sub">distribuídas</div></div>
+      <div class="kpi green"><div class="kpi-lbl">Média por consultor</div><div class="kpi-val">${mediaOS}</div><div class="kpi-sub">OS por pessoa</div></div>
+      <div class="kpi teal"><div class="kpi-lbl">Mais carregado</div><div class="kpi-val" style="font-size:14px;margin-top:4px">${maisCarregado}</div><div class="kpi-sub">${filtered[0]?.total||0} OS</div></div>
+      <div class="kpi red"><div class="kpi-lbl">Com urgência</div><div class="kpi-val">${comCritico}</div><div class="kpi-sub">check-in próximo</div></div>
     </div>`;
 
-  const filterBar = `
-    <div class="toolbar" style="margin-bottom:14px;">
-      <span class="t-label">Filtrar por tipo OS</span>
-      <div class="chips">
-        <span class="chip ${consFilter==='all'?'chip-all':'chip-all off'}" onclick="setConsFilter('all',this)">Todos (${allCons.reduce((s,c)=>s+c.total,0)})</span>
-        <span class="chip ${consFilter==='cot'?'chip-cotacao':'chip-cotacao off'}" onclick="setConsFilter('cot',this)"><span class="dot" style="background:var(--amber)"></span>Ag. Cotação (${totalCot})</span>
-        <span class="chip ${consFilter==='emi'?'chip-emissao':'chip-emissao off'}" onclick="setConsFilter('emi',this)"><span class="dot" style="background:var(--green)"></span>Ag. Emissão (${totalEmi})</span>
-      </div>
-      <span class="stats-bar">Exibindo <b>${sorted.length}</b> consultores</span>
+  // Filtros
+  const filterHtml = `
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center">
+      <span style="font-size:10px;font-weight:600;color:var(--ink4);text-transform:uppercase;letter-spacing:.07em">Filtrar:</span>
+      <button class="hfbtn ${consFilter==='todos'?'on':''}" onclick="setConsFilter('todos',this)">Todos (${Object.keys(consMap).length})</button>
+      <button class="hfbtn ${consFilter==='cot'?'on':''}" onclick="setConsFilter('cot',this)">Ag. Cotação</button>
+      <button class="hfbtn ${consFilter==='emi'?'on':''}" onclick="setConsFilter('emi',this)">Ag. Emissão</button>
+      <button class="hfbtn div ${consFilter==='critico'?'on div':''}" onclick="setConsFilter('critico',this)">🔴 Com urgência (${comCritico})</button>
     </div>`;
 
-  const cards = sorted.map(c => {
-    const pct = v => Math.round(v/c.total*100);
-    const bar = (v,color) => `<div class="cons-bar-fill" style="width:${pct(v)}%;background:${color}"></div>`;
-    const cotBadge = c.cot > 0 ? `<span class="tag tag-cot" style="font-size:10px;">${c.cot} cot.</span>` : '';
-    const emiBadge = c.emi > 0 ? `<span class="tag tag-emi" style="font-size:10px;">${c.emi} emi.</span>` : '';
+  // Cards
+  const cards = filtered.map(c => {
+    const pctBar = (v) => Math.min(100, Math.round(v/c.total*100));
+    const bar = (v,color) => `<div class="cons-bar-fill" style="width:${pctBar(v)}%;background:${color}"></div>`;
+    const initials = c.nome.split(' ').filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
+    const urgBadge = c.critico > 0
+      ? `<span class="tag tag-critico" style="font-size:10px">🔴 ${c.critico} crítico</span>`
+      : c.urgente > 0
+      ? `<span class="tag tag-urgente" style="font-size:10px">🟡 ${c.urgente} urgente</span>`
+      : '';
+
+    // Barra de progresso geral
+    const pctWidth = Math.round(c.total/maxTotal*100);
+
     return `<div class="cons-card">
-      <div class="cons-name">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:12px">
         <div style="display:flex;align-items:center;gap:10px">
-          <div class="cons-avatar">${getInitials(c.nome)}</div>
+          <div class="cons-avatar">${initials}</div>
           <div>
-            <div style="font-size:13px;font-weight:700;letter-spacing:-.01em">${c.nome}</div>
-            <div style="font-size:11px;color:#9ca3af;margin-top:2px;display:flex;gap:4px;align-items:center">${cotBadge}${emiBadge}</div>
+            <div style="font-size:13px;font-weight:600;color:var(--ink)">${c.nome}</div>
+            <div style="font-size:11px;color:var(--ink4);margin-top:2px">${c.hoteis.size} hotéis · ${c.cot} cotação · ${c.emi} emissão</div>
+            ${urgBadge ? `<div style="margin-top:4px">${urgBadge}</div>` : ''}
           </div>
         </div>
-        <div style="text-align:right">
-          <div class="cons-total">${c.total}</div>
-          <div class="cons-total-lbl">OS total</div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-size:24px;font-weight:700;color:var(--blue);font-family:'JetBrains Mono',monospace;line-height:1">${c.total}</div>
+          <div style="font-size:10px;color:var(--ink4)">OS total</div>
+        </div>
+      </div>
+      <div style="margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--ink4);margin-bottom:3px">
+          <span>Carga relativa</span><span>${pctWidth}% do max</span>
+        </div>
+        <div class="cons-bar-track" style="height:6px">
+          <div class="cons-bar-fill" style="width:${pctWidth}%;background:linear-gradient(90deg,var(--blue),var(--green))"></div>
         </div>
       </div>
       <div class="cons-bars">
         <div class="cons-bar-row">
           <span class="cons-bar-lbl">Pendente</span>
-          <div class="cons-bar-track">${bar(c.pendente,'#d1d5db')}</div>
+          <div class="cons-bar-track">${bar(c.pendente,'#D1D5DB')}</div>
           <span class="cons-bar-val">${c.pendente}</span>
         </div>
         <div class="cons-bar-row">
           <span class="cons-bar-lbl">Cotação hotel</span>
-          <div class="cons-bar-track">${bar(c.cotHotel,'#f59e0b')}</div>
+          <div class="cons-bar-track">${bar(c.cotHotel,'#F59E0B')}</div>
           <span class="cons-bar-val">${c.cotHotel}</span>
         </div>
         <div class="cons-bar-row">
           <span class="cons-bar-lbl">Ag. confirmação</span>
-          <div class="cons-bar-track">${bar(c.agConf,'#7c3aed')}</div>
+          <div class="cons-bar-track">${bar(c.agConf,'#7C3AED')}</div>
           <span class="cons-bar-val">${c.agConf}</span>
         </div>
+        ${c.critico+c.urgente > 0 ? `
+        <div class="cons-bar-row">
+          <span class="cons-bar-lbl">Urgência</span>
+          <div class="cons-bar-track">${bar(c.critico+c.urgente,'#DC2626')}</div>
+          <span class="cons-bar-val" style="color:var(--red)">${c.critico+c.urgente}</span>
+        </div>` : ''}
       </div>
     </div>`;
   }).join('');
 
-  container.innerHTML = kpiRow + filterBar + '<div class="cons-grid">' + cards + '</div>';
+  container.innerHTML = kpiHtml + filterHtml + '<div class="cons-grid">' + cards + '</div>';
 }
 
 window.setConsFilter = function(f, el) {
   consFilter = f;
   renderConsultores();
 };
+let consFilter = 'todos';
 let hoteisFiltro = 'todos';
 let hoteisSort = {col:'reservas', dir:-1};
 let hoteisSearch = '';
@@ -1145,104 +1211,106 @@ window.renderHoteis = function() {
 
   let data = [...HOTEIS_ANALISE];
 
-  // Filtros
-  if(hoteisFiltro === 'acordo') data = data.filter(h=>h.ac);
-  else if(hoteisFiltro === 'candidato') data = data.filter(h=>h.op==='candidato');
+  if(hoteisFiltro === 'acordo')    data = data.filter(h=>h.ac);
+  else if(hoteisFiltro === 'candidato')  data = data.filter(h=>h.op==='candidato');
   else if(hoteisFiltro === 'divergencia') data = data.filter(h=>h.op==='divergencia');
-  else if(hoteisFiltro === 'sem') data = data.filter(h=>!h.ac);
+  else if(hoteisFiltro === 'sem')   data = data.filter(h=>!h.ac);
 
-  // Busca
   if(hoteisSearch) {
     const s = hoteisSearch.toLowerCase();
     data = data.filter(h=>(h.n+h.c).toLowerCase().includes(s));
   }
 
-  // Sort
   data.sort((a,b) => {
     const av = a[hoteisSort.col] ?? -1;
     const bv = b[hoteisSort.col] ?? -1;
-    return typeof av === 'string' ? av.localeCompare(bv,'pt-BR')*hoteisSort.dir : (av-bv)*hoteisSort.dir;
+    return typeof av==='string' ? av.localeCompare(bv,'pt-BR')*hoteisSort.dir : (av-bv)*hoteisSort.dir;
   });
 
-  const totalHoteis  = HOTEIS_ANALISE.length;
-  const totalRes     = HOTEIS_ANALISE.reduce((s,h)=>s+h.res,0);
-  const totalValor   = HOTEIS_ANALISE.reduce((s,h)=>s+h.vt,0);
-  const totalAcordo  = HOTEIS_ANALISE.filter(h=>h.ac).length;
-  const totalCand    = HOTEIS_ANALISE.filter(h=>h.op==='candidato').length;
-  const totalDiv     = HOTEIS_ANALISE.filter(h=>h.op==='divergencia').length;
+  const total     = HOTEIS_ANALISE.length;
+  const totalRes  = HOTEIS_ANALISE.reduce((s,h)=>s+h.res,0);
+  const totalVal  = HOTEIS_ANALISE.reduce((s,h)=>s+h.vt,0);
+  const nAcordo   = HOTEIS_ANALISE.filter(h=>h.ac).length;
+  const nCand     = HOTEIS_ANALISE.filter(h=>h.op==='candidato').length;
+  const nDiv      = HOTEIS_ANALISE.filter(h=>h.op==='divergencia').length;
+  const nSem      = HOTEIS_ANALISE.filter(h=>!h.ac).length;
+  const econPot   = HOTEIS_ANALISE.reduce((s,h)=>s+(h.ep||0),0);
 
-  const fmt = v => v ? 'R$ '+v.toLocaleString('pt-BR') : '—';
-  const fmtK = v => v >= 1000 ? 'R$ '+(v/1000).toFixed(1)+'k' : fmt(v);
+  const fmtK = v => v >= 1000 ? 'R$ '+(v/1000).toFixed(0)+'k' : v ? 'R$ '+v : '—';
+  const fmtR = v => v ? 'R$ '+v.toLocaleString('pt-BR') : '—';
+  const sa = col => `<span style="font-size:9px;margin-left:2px;opacity:${hoteisSort.col===col?1:.4}">${hoteisSort.col===col?(hoteisSort.dir===-1?'▼':'▲'):'↕'}</span>`;
 
-  const sortArrow = col => `<span class="sort-arrow ${hoteisSort.col===col?'active':''}">${hoteisSort.col===col?(hoteisSort.dir===-1?'▼':'▲'):'↕'}</span>`;
-
-  const rows = data.map((h,i) => {
-    let badgeHtml = '';
-    if(h.op==='candidato') badgeHtml = `<span class="badge-acordo badge-cand">Candidato</span>`;
-    else if(h.op==='divergencia') badgeHtml = `<span class="badge-acordo badge-div">Divergência</span>`;
-    else if(h.ac) badgeHtml = `<span class="badge-acordo badge-ok">Acordo</span>`;
-    else badgeHtml = `<span class="badge-acordo badge-sem">Sem acordo</span>`;
+  const rows = data.map(h => {
+    let badge = '';
+    if(h.op==='candidato')    badge = `<span class="badge badge-cand">Candidato</span>`;
+    else if(h.op==='divergencia') badge = `<span class="badge badge-div">Divergência</span>`;
+    else if(h.ac)              badge = `<span class="badge badge-ok">Acordo</span>`;
+    else                       badge = `<span class="badge badge-sem">Sem acordo</span>`;
 
     const diffHtml = h.ta && h.tm ? (() => {
-      const diff = h.tm - h.ta;
-      const pct = Math.round(diff/h.ta*100);
-      if(Math.abs(diff) < 10) return '';
-      return `<div class="tarifa-diff ${diff>0?'pos':'neg'}">${diff>0?'+':''}${diff} (${pct>0?'+':''}${pct}%)</div>`;
+      const diff = Math.round(h.tm - h.ta);
+      const pct  = Math.round(diff/h.ta*100);
+      if(Math.abs(diff) < 5) return '';
+      return `<div class="${diff>0?'diff-pos':'diff-neg'}">${diff>0?'+':''}${diff} (${pct>0?'+':''}${pct}%)</div>`;
     })() : '';
 
-    const ecoPot = h.ep ? `<div style="font-size:10px;color:#059669;font-weight:500">Eco: R$ ${h.ep.toLocaleString('pt-BR')}</div>` : '';
+    const ecoHtml = h.ep ? `<div style="font-size:10px;color:var(--green);font-weight:600;margin-top:2px">Eco pot.: ${fmtK(h.ep)}</div>` : '';
 
     return `<tr>
-      <td style="font-weight:500;color:#111;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.n}">${h.n}</td>
-      <td style="color:#6b7280;font-size:11px">${h.c}</td>
-      <td style="text-align:center;font-weight:600;color:#2563eb;font-family:'IBM Plex Mono',monospace">${h.res}</td>
-      <td style="font-family:'IBM Plex Mono',monospace">${fmtK(h.vt)}</td>
+      <td style="font-weight:500;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.n}">${h.n}</td>
+      <td style="color:var(--ink3);font-size:11px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.c}</td>
+      <td style="text-align:center;font-weight:700;color:var(--blue);font-family:'JetBrains Mono',monospace">${h.res}</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-weight:500">${fmtK(h.vt)}</td>
       <td>
-        <div style="font-family:'IBM Plex Mono',monospace;font-weight:500">${h.tm ? 'R$ '+h.tm : '—'}</div>
-        ${h.tmin&&h.tmax?`<div style="font-size:10px;color:#9ca3af">R$ ${h.tmin}–R$ ${h.tmax}</div>`:''}
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:500">${h.tm ? 'R$ '+h.tm : '—'}</div>
+        ${h.tmin&&h.tmax&&h.tmin!==h.tmax ? `<div style="font-size:10px;color:var(--ink4)">R$ ${h.tmin}–${h.tmax}</div>` : ''}
       </td>
       <td>
-        <div style="font-family:'IBM Plex Mono',monospace;font-weight:500;color:#059669">${h.ta ? 'R$ '+h.ta : '—'}</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:500;color:var(--green)">${h.ta ? 'R$ '+h.ta : '—'}</div>
         ${diffHtml}
       </td>
-      <td>${badgeHtml}${ecoPot}</td>
-      <td style="font-size:11px;color:#6b7280;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.cp}</td>
-      <td style="text-align:center;color:#9ca3af;font-size:11px">${h.nc}</td>
+      <td>${badge}${ecoHtml}</td>
+      <td style="font-size:11px;color:var(--ink3);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${h.cp}">${h.cp||'—'}</td>
+      <td style="text-align:center;color:var(--ink4);font-size:11px">${h.nc}</td>
     </tr>`;
   }).join('');
 
   c.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px">
-      <div class="kpi-card k-total"><div class="kpi-label">Hotéis analisados</div><div class="kpi-num" style="color:#2563eb">${totalHoteis}</div><div class="kpi-sub">10+ reservas em 2026</div></div>
-      <div class="kpi-card k-emi"><div class="kpi-label">Total reservas</div><div class="kpi-num" style="color:#12a05e">${totalRes.toLocaleString('pt-BR')}</div><div class="kpi-sub">no período</div></div>
-      <div class="kpi-card k-cot"><div class="kpi-label">Valor total gasto</div><div class="kpi-num" style="color:#d97706;font-size:20px">R$ ${(totalValor/1000).toFixed(0)}k</div><div class="kpi-sub">em hotelaria 2026</div></div>
-      <div class="kpi-card k-accord"><div class="kpi-label">Com acordo</div><div class="kpi-num" style="color:#059669">${totalAcordo}</div><div class="kpi-sub">hotéis negociados</div></div>
-      <div class="kpi-card k-sem"><div class="kpi-label">Candidatos</div><div class="kpi-num" style="color:#d97706">${totalCand}</div><div class="kpi-sub">oportunidade de negociação</div></div>
+      <div class="kpi blue"><div class="kpi-lbl">Hotéis analisados</div><div class="kpi-val">${total}</div><div class="kpi-sub">10+ reservas em 2026</div></div>
+      <div class="kpi green"><div class="kpi-lbl">Total reservas</div><div class="kpi-val">${totalRes.toLocaleString('pt-BR')}</div><div class="kpi-sub">no período</div></div>
+      <div class="kpi amber"><div class="kpi-lbl">Valor total gasto</div><div class="kpi-val" style="font-size:18px;margin-top:4px">R$ ${(totalVal/1000).toFixed(0)}k</div><div class="kpi-sub">em hotelaria 2026</div></div>
+      <div class="kpi teal"><div class="kpi-lbl">Com acordo</div><div class="kpi-val">${nAcordo}</div><div class="kpi-sub">tarifa negociada</div></div>
+      <div class="kpi red"><div class="kpi-lbl">Candidatos negoc.</div><div class="kpi-val">${nCand}</div><div class="kpi-sub">oportunidade</div></div>
     </div>
 
-    <div class="hoteis-filters">
-      <span style="font-size:11px;color:#9ca3af;font-weight:600;text-transform:uppercase;letter-spacing:.06em">Filtrar:</span>
-      <button class="hoteis-filter-btn ${hoteisFiltro==='todos'?'active':''}" onclick="setHoteisFiltro('todos')">Todos (${totalHoteis})</button>
-      <button class="hoteis-filter-btn cand ${hoteisFiltro==='candidato'?'active':''}" onclick="setHoteisFiltro('candidato')">Candidatos negociação (${totalCand})</button>
-      <button class="hoteis-filter-btn div ${hoteisFiltro==='divergencia'?'active':''}" onclick="setHoteisFiltro('divergencia')">Divergência tarifa (${totalDiv})</button>
-      <button class="hoteis-filter-btn ${hoteisFiltro==='acordo'?'active':''}" onclick="setHoteisFiltro('acordo')">Com acordo (${totalAcordo})</button>
-      <button class="hoteis-filter-btn ${hoteisFiltro==='sem'?'active':''}" onclick="setHoteisFiltro('sem')">Sem acordo</button>
-      <input class="hoteis-search" placeholder="Buscar hotel ou cidade…" value="${hoteisSearch}" oninput="hoteisSearch=this.value;renderHoteis()">
-      <span style="margin-left:auto;font-size:11px;color:#9ca3af">${data.length} hotéis</span>
+    ${econPot > 0 ? `<div style="background:var(--green-l);border:1px solid #A7F3D0;border-radius:var(--r);padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:12px;color:var(--green-d)">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0"><path d="M8 2v12M5 5l3-3 3 3M5 11l3 3 3-3"/></svg>
+      <span>Economia potencial identificada: <strong>R$ ${econPot.toLocaleString('pt-BR')}</strong> em ${nDiv} hotel(is) com divergência de tarifa acima do acordo.</span>
+    </div>` : ''}
+
+    <div class="hfilters">
+      <button class="hfbtn ${hoteisFiltro==='todos'?'on':''}" onclick="setHoteisFiltro('todos')">Todos (${total})</button>
+      <button class="hfbtn cand ${hoteisFiltro==='candidato'?'on cand':''}" onclick="setHoteisFiltro('candidato')">Candidatos negociação (${nCand})</button>
+      <button class="hfbtn div ${hoteisFiltro==='divergencia'?'on div':''}" onclick="setHoteisFiltro('divergencia')">Divergência tarifa (${nDiv})</button>
+      <button class="hfbtn ac ${hoteisFiltro==='acordo'?'on ac':''}" onclick="setHoteisFiltro('acordo')">Com acordo (${nAcordo})</button>
+      <button class="hfbtn ${hoteisFiltro==='sem'?'on':''}" onclick="setHoteisFiltro('sem')">Sem acordo (${nSem})</button>
+      <input class="hsearch" placeholder="Buscar hotel ou cidade…" value="${hoteisSearch}" oninput="hoteisSearch=this.value;renderHoteis()">
+      <span style="margin-left:auto;font-size:11px;color:var(--ink4)">${data.length} hotéis exibidos</span>
     </div>
 
-    <div class="hoteis-table-wrap">
-      <table class="hoteis-table">
+    <div class="htable-wrap">
+      <table class="htable">
         <thead><tr>
-          <th onclick="sortHoteis('n')">Hotel ${sortArrow('n')}</th>
-          <th onclick="sortHoteis('c')">Cidade ${sortArrow('c')}</th>
-          <th onclick="sortHoteis('res')" style="text-align:center">Reservas ${sortArrow('res')}</th>
-          <th onclick="sortHoteis('vt')">Valor total ${sortArrow('vt')}</th>
-          <th onclick="sortHoteis('tm')">Tarifa média ${sortArrow('tm')}</th>
-          <th onclick="sortHoteis('ta')">Tarifa acordo ${sortArrow('ta')}</th>
+          <th onclick="sortHoteis('n')">Hotel ${sa('n')}</th>
+          <th onclick="sortHoteis('c')">Cidade ${sa('c')}</th>
+          <th onclick="sortHoteis('res')" style="text-align:center">Reservas ${sa('res')}</th>
+          <th onclick="sortHoteis('vt')">Valor total ${sa('vt')}</th>
+          <th onclick="sortHoteis('tm')">Tarifa média ${sa('tm')}</th>
+          <th onclick="sortHoteis('ta')">Tarifa acordo ${sa('ta')}</th>
           <th>Status</th>
-          <th>Consultor principal</th>
-          <th style="text-align:center">Nº consultores</th>
+          <th onclick="sortHoteis('cp')">Consultor principal ${sa('cp')}</th>
+          <th style="text-align:center">Consultores</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -1261,31 +1329,63 @@ window.sortHoteis = function(col) {
 };
 
 // Garantir que DATA foi carregado antes de iniciar
+// ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
+function getDiasParaCheckin(dStr) {
+  if (!dStr || !dStr.includes('/')) return null;
+  try {
+    const [dd, mm] = dStr.split('/').map(Number);
+    const hoje = new Date();
+    const ano = hoje.getFullYear();
+    const checkin = new Date(ano, mm - 1, dd);
+    const diff = Math.round((checkin - hoje) / (1000 * 60 * 60 * 24));
+    return diff;
+  } catch(e) { return null; }
+}
+
+function getUrgenciaOS(o) {
+  const dias = getDiasParaCheckin(o.d);
+  if (dias === null) return null;
+  if (dias >= 0 && dias <= 1) return 'critico';
+  if (dias >= 2 && dias <= 3) return 'urgente';
+  return null;
+}
+
+function getUrgenciaGrupo(g) {
+  const osAtivas = g.os.filter(o => STATE[o.n]?.status !== 'Sim');
+  if (osAtivas.some(o => getUrgenciaOS(o) === 'critico')) return 'critico';
+  if (osAtivas.some(o => getUrgenciaOS(o) === 'urgente')) return 'urgente';
+  return null;
+}
+
+// Variáveis globais inicializadas antes das funções
+const STATE = {};
+const DONO = {};
+const OPEN = new Set();
+let currentFilter = 'all';
+let currentPage = 1;
+const PAGE_SIZE = 50;
+
+
+
+
+
 function iniciarDashboard() {
   if (typeof DATA === 'undefined' || !Array.isArray(DATA)) {
     setTimeout(iniciarDashboard, 50);
     return;
   }
-
-const ORDER = {div:0,sem_ref:1,historico:2,acordo:3};
-DATA.sort((a,b) => {
-  // Recorrentes (2+ OS) primeiro dentro de cada tipo
-  const aRec = a.os.length >= 2 ? 0 : 1;
-  const bRec = b.os.length >= 2 ? 0 : 1;
-  if(ORDER[a.tipo] !== ORDER[b.tipo]) return ORDER[a.tipo] - ORDER[b.tipo];
-  if(aRec !== bRec) return aRec - bRec;
-  return a.h.localeCompare(b.h,'pt-BR');
-});
-
-const STATE = {};
-DATA.forEach(g => g.os.forEach(o => { STATE[o.n] = {status:'Pendente',resp:'',obs:''}; }));
-const DONO = {};
-DATA.forEach((g,i) => { DONO[i] = g.dono || ''; });
-
-const OPEN = new Set();
-let currentFilter = 'all';
-let currentPage = 1;
-const PAGE_SIZE = 50;
+  // Ordenar dados
+  const ORDER = {div:0,sem_ref:1,historico:2,acordo:3};
+  DATA.sort((a,b) => {
+    const aRec = a.os.length >= 2 ? 0 : 1;
+    const bRec = b.os.length >= 2 ? 0 : 1;
+    if(ORDER[a.tipo] !== ORDER[b.tipo]) return ORDER[a.tipo] - ORDER[b.tipo];
+    if(aRec !== bRec) return aRec - bRec;
+    return a.h.localeCompare(b.h,'pt-BR');
+  });
+  // Inicializar STATE e DONO
+  DATA.forEach(g => g.os.forEach(o => { STATE[o.n] = {status:'Pendente',resp:'',obs:''}; }));
+  DATA.forEach((g,i) => { DONO[i] = g.dono || ''; });
   loadPersisted();
   atualizarKPIs();
   renderGroups();
