@@ -557,20 +557,29 @@ function exportCSV(){
   a.download='HoteisEurofarma_'+new Date().toISOString().slice(0,10)+'.csv';
   a.click();
 }
-
-
-// Aguarda data.js carregar completamente antes de iniciar
-function init() {
-  if(typeof DATA === 'undefined' || !Array.isArray(DATA)) {
-    setTimeout(init, 50);
-    return;
-  }
-  loadPersisted();
-  atualizarKPIs();
-  renderGroups();
-  initCharts();
+function atualizarKPIs() {
+  if(typeof DATA === 'undefined' || !DATA.length) return;
+  const totalOS   = DATA.reduce((s,g)=>s+g.os.length,0);
+  const n_accord  = DATA.filter(g=>g.tipo==='acordo').length;
+  const n_hist    = DATA.filter(g=>g.tipo==='historico').length;
+  const n_sem     = DATA.filter(g=>g.tipo==='sem_ref').length;
+  const n_div     = DATA.filter(g=>g.tipo==='div').length;
+  const n_cot     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Cotação').length,0);
+  const n_emi     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Emissão').length,0);
+  const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+  set('kpiTotalOS',     totalOS);
+  set('kpiTotalGrupos', DATA.length + ' grupos hotel+cidade');
+  set('kpiCot',         n_cot);
+  set('kpiEmi',         n_emi);
+  set('kpi-accord',     n_accord);
+  set('kpi-hist',       n_hist);
+  set('kpi-sem',        n_sem);
 }
-init();
+
+loadPersisted();
+atualizarKPIs();
+renderGroups();
+initCharts();
 </script>
 </body>
 </html>
