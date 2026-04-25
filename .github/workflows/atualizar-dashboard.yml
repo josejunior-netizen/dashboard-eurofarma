@@ -22,7 +22,9 @@ jobs:
           python-version: '3.11'
 
       - name: Instalar dependências
-        run: pip install requests openpyxl
+        run: |
+          pip install requests openpyxl
+          sudo apt-get install -y libreoffice
 
       - name: Verificar secrets
         run: |
