@@ -101,17 +101,19 @@ def carregar_sourcing(raw_bytes):
     return sourcing
 
 def carregar_historico(raw_bytes):
-    """Retorna dicts de emissores e tarifas por hotel+cidade."""
+    """Retorna dicts de emissores e tarifas por hotel+cidade, separadas por tipo de apto."""
     import io
     wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), read_only=True)
     ws = wb["Vol. Hotelaria 2026"]
     rows = list(ws.iter_rows(values_only=True))
-    hotel_hist     = defaultdict(list)
+    hotel_hist_sgl  = defaultdict(list)
+    hotel_hist_dbl  = defaultdict(list)
     hotel_emissores = defaultdict(Counter)
     for r in rows[1:]:
-        hotel   = str(r[17]).strip().upper() if r[17] else ""
-        cidade  = str(r[32]).strip().upper() if r[32] else ""
-        emissor = str(r[65]).strip() if r[65] else ""
+        hotel      = str(r[17]).strip().upper() if r[17] else ""
+        cidade     = str(r[32]).strip().upper() if r[32] else ""
+        emissor    = str(r[65]).strip() if r[65] else ""
+        tipo_apto  = str(r[40]).strip().upper() if r[40] else "SGL"
         if not hotel or emissor in ("None", "COPASTUR", "", "nan"):
             continue
         try:
@@ -120,10 +122,13 @@ def carregar_historico(raw_bytes):
             valor = None
         key = f"{hotel}||{cidade}"
         if valor and valor > 0:
-            hotel_hist[key].append({"emissor": emissor, "valor": valor})
+            if tipo_apto == "DBL":
+                hotel_hist_dbl[key].append(valor)
+            else:
+                hotel_hist_sgl[key].append(valor)
         hotel_emissores[key][emissor] += 1
-    print(f"  ✓ Histórico: {len(hotel_emissores)} hotéis com reservas")
-    return hotel_hist, hotel_emissores
+    print(f"  OK Historico: {len(hotel_emissores)} hoteis com reservas")
+    return hotel_hist_sgl, hotel_hist_dbl, hotel_emissores
 
 # ── Funções de cruzamento ────────────────────────────────────────────────────
 
