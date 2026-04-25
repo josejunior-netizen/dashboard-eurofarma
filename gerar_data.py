@@ -1,38 +1,33 @@
 #!/usr/bin/env python3
-"""
-gerar_data.py — Eurofarma Dashboard
-Baixa o XLS de OS do OneDrive/SharePoint, cruza com Sourcing 2026
-e Vol. Hotelaria, e gera o arquivo data.js que o HTML consome.
-
-Variáveis de ambiente necessárias (definidas como GitHub Secrets):
-  ONEDRIVE_URL  — link de download direto do SourceHoteis (XLS)
-  SOURCING_URL  — link de download direto do Sourcing (XLSX)
-"""
-
-import os
-import sys
-import json
-import unicodedata
-import re
-import requests
+import os, sys, json, unicodedata, re, requests
 from collections import defaultdict, Counter
 from datetime import datetime
 import openpyxl
 
-# ── Configuração ─────────────────────────────────────────────────────────────
-
 ONEDRIVE_URL = os.environ.get("ONEDRIVE_URL", "")
 SOURCING_URL = os.environ.get("SOURCING_URL", "")
 
-OUTPUT_FILE  = "data.js"        # na raiz do repo (GitHub Pages serve daqui)
+print("=" * 60)
+print("Eurofarma Dashboard — gerador de data.js")
+print("=" * 60)
+print(f"ONEDRIVE_URL: {len(ONEDRIVE_URL)} caracteres")
+print(f"SOURCING_URL: {len(SOURCING_URL)} caracteres")
 
-# Tolerância de divergência de tarifa (12%)
+if not ONEDRIVE_URL:
+    print("ERRO: ONEDRIVE_URL vazia — verifique o secret no GitHub.")
+    sys.exit(1)
+if not SOURCING_URL:
+    print("ERRO: SOURCING_URL vazia — verifique o secret no GitHub.")
+    sys.exit(1)
+
+print("URLs OK — iniciando processamento...")
+
+OUTPUT_FILE   = "data.js"
 DIV_THRESHOLD = 0.12
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def norm(s):
-    """Normaliza string para comparação: maiúsculo, sem acento, só alfanum."""
     s = unicodedata.normalize("NFD", str(s).upper().strip())
     s = "".join(c for c in s if unicodedata.category(c) != "Mn")
     return re.sub(r"[^A-Z0-9 /]", "", s).strip()
@@ -45,7 +40,6 @@ def safe_float(v):
         return None
 
 def fmt_date(val):
-    """Retorna dd/mm a partir de string ISO ou objeto datetime."""
     if not val or str(val).strip() in ("", "None", "nan"):
         return ""
     try:
@@ -58,15 +52,14 @@ def fmt_date(val):
 
 def download_bytes(url, label):
     print(f"  Baixando {label}...")
-    resp = requests.get(url, timeout=60)
+    resp = requests.get(url, timeout=60, allow_redirects=True)
     resp.raise_for_status()
-    print(f"  ✓ {label}: {len(resp.content):,} bytes")
+    print(f"  OK {label}: {len(resp.content):,} bytes")
     return resp.content
 
-# ── Leitura do Sourcing XLSX ──────────────────────────────────────────────────
+# ── Sourcing ──────────────────────────────────────────────────────────────────
 
 def carregar_sourcing(raw_bytes):
-    """Retorna dict keyed by 'HOTEL||CIDADE' com dados do acordo."""
     import io
     wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), read_only=True)
     ws = wb["Sourcing 2026 - Eurofarma"]
@@ -80,33 +73,32 @@ def carregar_sourcing(raw_bytes):
         hotel  = str(r[3]).strip().upper() if r[3] else ""
         key    = f"{hotel}||{cidade}"
         blackout = str(r[23]).strip() if r[23] else ""
-        if blackout.lower() in ("não", "none", "nan", "não, as taxas são válidas para todas as datas.", ""):
+        if blackout.lower() in ("nao", "none", "nan", "nao, as taxas sao validas para todas as datas.", ""):
             blackout = ""
         email = str(r[25]).strip() if r[25] else ""
         if email.lower() in ("none", "nan", ""):
             email = ""
         sourcing[key] = {
-            "hotel":  hotel,
-            "cidade": cidade,
-            "status": status,
+            "hotel":       hotel,
+            "cidade":      cidade,
+            "status":      status,
             "tarifa_ind":  safe_float(r[5]),
             "tarifa_dup":  safe_float(r[6]),
             "tipo_tarifa": str(r[10]).strip() if r[10] else "",
-            "condicao": ("LRA" if r[11] and "NLRA" not in str(r[11]) and "LRA" in str(r[11]) else "NLRA") if r[11] else "",
-            "blackout": blackout[:60],
-            "email":   email,
-            "cafe":    str(r[19]).strip() if r[19] else "",
+            "condicao":    ("LRA" if r[11] and "NLRA" not in str(r[11]) and "LRA" in str(r[11]) else "NLRA") if r[11] else "",
+            "blackout":    blackout[:60],
+            "email":       email,
+            "cafe":        str(r[19]).strip() if r[19] else "",
         }
-    print(f"  ✓ Sourcing: {len(sourcing)} acordos ativos")
+    print(f"  OK Sourcing: {len(sourcing)} acordos ativos")
     return sourcing
 
 def carregar_historico(raw_bytes):
-    """Retorna dicts de emissores e tarifas por hotel+cidade."""
     import io
     wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), read_only=True)
     ws = wb["Vol. Hotelaria 2026"]
     rows = list(ws.iter_rows(values_only=True))
-    hotel_hist     = defaultdict(list)
+    hotel_hist      = defaultdict(list)
     hotel_emissores = defaultdict(Counter)
     for r in rows[1:]:
         hotel   = str(r[17]).strip().upper() if r[17] else ""
@@ -122,10 +114,10 @@ def carregar_historico(raw_bytes):
         if valor and valor > 0:
             hotel_hist[key].append({"emissor": emissor, "valor": valor})
         hotel_emissores[key][emissor] += 1
-    print(f"  ✓ Histórico: {len(hotel_emissores)} hotéis com reservas")
+    print(f"  OK Historico: {len(hotel_emissores)} hoteis com reservas")
     return hotel_hist, hotel_emissores
 
-# ── Funções de cruzamento ────────────────────────────────────────────────────
+# ── Cruzamento ────────────────────────────────────────────────────────────────
 
 def buscar_sourcing(hotel_name, cidade_str, sourcing):
     hn = norm(hotel_name)
@@ -135,7 +127,6 @@ def buscar_sourcing(hotel_name, cidade_str, sourcing):
         kc = norm(v["cidade"])
         if (hn in kh or kh in hn) and (cn in kc or kc in cn):
             return v
-    # fallback: só nome do hotel
     for k, v in sourcing.items():
         kh = norm(v["hotel"])
         if hn == kh or (len(hn) > 5 and (hn in kh or kh in hn)):
@@ -169,20 +160,14 @@ def buscar_historico(hotel_name, cidade_str, hotel_hist, hotel_emissores):
         "tarifas":     sorted({round(t) for t in tarifas})[:5],
     }
 
-# ── Leitura do XLS de OS (via LibreOffice ou openpyxl xlrd-free) ──────────────
+# ── Leitura do XLS ────────────────────────────────────────────────────────────
 
 def ler_os_xls(raw_bytes):
-    """
-    Converte XLS → CSV usando LibreOffice (disponível no runner ubuntu-latest),
-    então lê com Python. Retorna lista de dicts com as colunas esperadas.
-    """
-    import subprocess, tempfile, csv, io
-
+    import subprocess, tempfile, csv
     with tempfile.TemporaryDirectory() as tmpdir:
         xls_path = os.path.join(tmpdir, "source.xls")
         with open(xls_path, "wb") as f:
             f.write(raw_bytes)
-
         result = subprocess.run(
             ["libreoffice", "--headless", "--convert-to", "csv",
              "--outdir", tmpdir, xls_path],
@@ -190,19 +175,16 @@ def ler_os_xls(raw_bytes):
         )
         if result.returncode != 0:
             raise RuntimeError(f"LibreOffice falhou: {result.stderr[:300]}")
-
         csv_path = xls_path.replace(".xls", ".csv")
         with open(csv_path, encoding="utf-8", errors="replace") as f:
             reader = csv.DictReader(f)
             rows = list(reader)
-
-    print(f"  ✓ OS lidas: {len(rows)} linhas")
+    print(f"  OK OS lidas: {len(rows)} linhas")
     return rows
 
-# ── Processamento principal ───────────────────────────────────────────────────
+# ── Processamento ─────────────────────────────────────────────────────────────
 
 def processar(os_rows, sourcing, hotel_hist, hotel_emissores):
-    """Agrupa OS por hotel+cidade, classifica e enriquece."""
     grupos = defaultdict(list)
     for r in os_rows:
         hotel  = str(r.get("NOME DO HOTEL", "")).strip()
@@ -211,24 +193,22 @@ def processar(os_rows, sourcing, hotel_hist, hotel_emissores):
             hotel = "Sem nome"
         if not cidade or cidade.lower() in ("nan", "none", ""):
             cidade = ""
-        key = (hotel, cidade)
-        grupos[key].append(r)
+        grupos[(hotel, cidade)].append(r)
 
-    # Ordenar: grupos com 2+ OS primeiro
     grupos_ord = sorted(grupos.items(), key=lambda x: (-len(x[1]), x[0][0]))
+    enriched   = []
 
-    enriched = []
     for (hotel, cidade), rows in grupos_ord:
         os_list = []
         for r in rows:
             try:
-                n_os = int(float(str(r.get("NÚMERO DA OS", 0)).replace(",", ".")))
+                n_os = int(float(str(r.get("NUMERO DA OS", r.get("NÚMERO DA OS", 0))).replace(",", ".")))
             except Exception:
                 n_os = 0
             if not n_os:
                 continue
 
-            tarifa_raw = r.get("VALOR DA DIÁRIA", "") or r.get("VALOR DA DIARIA", "")
+            tarifa_raw = r.get("VALOR DA DIARIA", r.get("VALOR DA DIÁRIA", "")) or ""
             try:
                 t_val = int(float(str(tarifa_raw).replace(",", ".")))
                 if t_val <= 0:
@@ -237,14 +217,14 @@ def processar(os_rows, sourcing, hotel_hist, hotel_emissores):
                 t_val = None
 
             status_orig = str(r.get("STATUS DA VIAGEM", ""))
-            q = "Cotação" if "Cotação" in status_orig or "Cotacao" in status_orig else "Emissão"
+            q = "Cotação" if "Cota" in status_orig else "Emissão"
 
             apto = str(r.get("TIPO DE APARTAMENTO", "Individual")).strip()
             if apto.lower() in ("nan", "none", ""):
                 apto = "Individual"
 
-            hosp = str(r.get("NOME DO HÓSPEDE", r.get("NOME DO HOSPEDE", ""))).strip()[:30]
-            obs  = str(r.get("OBSERVAÇÃO", r.get("OBSERVACAO", ""))).strip()[:80]
+            hosp = str(r.get("NOME DO HOSPEDE", r.get("NOME DO HÓSPEDE", ""))).strip()[:30]
+            obs  = str(r.get("OBSERVACAO", r.get("OBSERVAÇÃO", ""))).strip()[:80]
             obs  = obs if obs.lower() not in ("nan", "none") else ""
 
             os_list.append({
@@ -252,7 +232,7 @@ def processar(os_rows, sourcing, hotel_hist, hotel_emissores):
                 "q":        q,
                 "cons":     str(r.get("NOME DO CONSULTOR", "")).strip(),
                 "t":        t_val,
-                "d":        fmt_date(r.get("DATA DE CHECK-IN", "")),
+                "d":        fmt_date(r.get("DATA DE CHECK-IN", r.get("DATA DE CHECKIN", ""))),
                 "hosp":     hosp if hosp.lower() not in ("nan", "none") else "",
                 "apto":     apto,
                 "obs_orig": obs,
@@ -315,16 +295,14 @@ def processar(os_rows, sourcing, hotel_hist, hotel_emissores):
 
     return enriched
 
-# ── Geração do data.js ────────────────────────────────────────────────────────
+# ── Gerar data.js ─────────────────────────────────────────────────────────────
 
 def gerar_data_js(enriched, timestamp_str):
-    """Serializa enriched[] como data.js consumível pelo HTML."""
     lines = [
         f'// Gerado automaticamente em {timestamp_str}',
         f'const DATA_TIMESTAMP = "{timestamp_str}";',
         'const DATA = [',
     ]
-
     for g in enriched:
         os_items = []
         for o in g["os"]:
@@ -336,87 +314,58 @@ def gerar_data_js(enriched, timestamp_str):
                 f'{{n:{o["n"]},q:"{o["q"]}",cons:"{o["cons"]}",t:{t_val},'
                 f'd:"{o["d"]}",hosp:"{hosp}",apto:"{apto}",obs_orig:"{obs_orig}"}}'
             )
-
-        src = g.get("src")
+        src    = g.get("src")
         src_js = "null"
         if src and any(src.values()):
             parts = []
-            if src.get("ti"): parts.append(f'ti:{src["ti"]}')
-            if src.get("td"): parts.append(f'td:{src["td"]}')
-            if src.get("tt"): parts.append(f'tt:"{src["tt"]}"')
+            if src.get("ti"):   parts.append(f'ti:{src["ti"]}')
+            if src.get("td"):   parts.append(f'td:{src["td"]}')
+            if src.get("tt"):   parts.append(f'tt:"{src["tt"]}"')
             if src.get("cond"): parts.append(f'cond:"{src["cond"]}"')
-            if src.get("bk"):
-                bk = src["bk"].replace('"', ' ')
-                parts.append(f'bk:"{bk}"')
-            if src.get("em"): parts.append(f'em:"{src["em"]}"')
+            if src.get("bk"):   parts.append(f'bk:"{src["bk"].replace(chr(34), " ")}"')
+            if src.get("em"):   parts.append(f'em:"{src["em"]}"')
             if src.get("cafe"): parts.append(f'cafe:"{src["cafe"]}"')
             if parts:
                 src_js = "{" + ",".join(parts) + "}"
-
         ht   = json.dumps(g.get("ht", []))
         dono = g.get("dono", "").replace('"', ' ')
         mc   = "true" if g.get("mc") else "false"
         tr   = str(g["tr"]) if g.get("tr") else "null"
         h    = g["h"].replace('"', ' ').replace("'", ' ')
         c    = g["c"].replace('"', ' ')
-
         line = (
             f'  {{h:"{h}",c:"{c}",tipo:"{g["tipo"]}",'
             f'tr:{tr},dono:"{dono}",mc:{mc},nrh:{g.get("nrh",0)},nem:{g.get("nem",0)},'
             f'ht:{ht},src:{src_js},os:[{",".join(os_items)}]}}'
         )
         lines.append(line + ',')
-
     lines.append('];')
     return "\n".join(lines)
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
-    print("=" * 60)
-    print("Eurofarma Dashboard — gerador de data.js")
-    print("=" * 60)
+print("\n[1/4] Baixando bases de dados...")
+xls_bytes      = download_bytes(ONEDRIVE_URL, "SourceHoteis (OS)")
+sourcing_bytes = download_bytes(SOURCING_URL, "Sourcing 2026")
 
-    # Validações
-    if not ONEDRIVE_URL:
-        print("ERRO: ONEDRIVE_URL não definida. Configure o secret no GitHub.")
-        sys.exit(1)
-    if not SOURCING_URL:
-        print("ERRO: SOURCING_URL não definida. Configure o secret no GitHub.")
-        sys.exit(1)
+print("\n[2/4] Processando Sourcing e Historico...")
+sourcing = carregar_sourcing(sourcing_bytes)
+hotel_hist, hotel_emissores = carregar_historico(sourcing_bytes)
 
-    # 1. Baixar arquivos
-    print("\n[1/4] Baixando bases de dados...")
-    xls_bytes     = download_bytes(ONEDRIVE_URL, "SourceHoteis (OS)")
-    sourcing_bytes = download_bytes(SOURCING_URL, "Sourcing 2026")
+print("\n[3/4] Lendo OS do XLS...")
+os_rows  = ler_os_xls(xls_bytes)
+enriched = processar(os_rows, sourcing, hotel_hist, hotel_emissores)
 
-    # 2. Processar Sourcing e Histórico
-    print("\n[2/4] Processando Sourcing e Histórico...")
-    sourcing = carregar_sourcing(sourcing_bytes)
-    hotel_hist, hotel_emissores = carregar_historico(sourcing_bytes)
+tipos = Counter(g["tipo"] for g in enriched)
+n_os  = sum(len(g["os"]) for g in enriched)
+print(f"\n  Grupos: {len(enriched)} | OS: {n_os}")
+print(f"  Tipos: {dict(tipos)}")
+print(f"  Multi-consultores: {sum(1 for g in enriched if g['mc'])}")
 
-    # 3. Ler e processar OS
-    print("\n[3/4] Lendo OS do XLS...")
-    os_rows  = ler_os_xls(xls_bytes)
-    enriched = processar(os_rows, sourcing, hotel_hist, hotel_emissores)
-
-    # Stats
-    from collections import Counter as C
-    tipos = C(g["tipo"] for g in enriched)
-    n_os  = sum(len(g["os"]) for g in enriched)
-    print(f"\n  Grupos: {len(enriched)} | OS: {n_os}")
-    print(f"  Tipos: {dict(tipos)}")
-    print(f"  Multi-consultores: {sum(1 for g in enriched if g['mc'])}")
-
-    # 4. Gerar data.js
-    print("\n[4/4] Gerando data.js...")
-    ts  = datetime.now().strftime("%d/%m/%Y %H:%M")
-    js  = gerar_data_js(enriched, ts)
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.write(js)
-    print(f"  ✓ {OUTPUT_FILE} gravado ({len(js):,} chars)")
-
-    print("\n✅ Concluído com sucesso.")
-
-if __name__ == "__main__":
-    main()
+print("\n[4/4] Gerando data.js...")
+ts = datetime.now().strftime("%d/%m/%Y %H:%M")
+js = gerar_data_js(enriched, ts)
+with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    f.write(js)
+print(f"  OK data.js gravado ({len(js):,} chars)")
+print("\nConcluido com sucesso.")
