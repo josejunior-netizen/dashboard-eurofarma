@@ -559,10 +559,18 @@ function exportCSV(){
 }
 
 
-loadPersisted();
-atualizarKPIs();
-renderGroups();
-initCharts();
+// Aguarda data.js carregar completamente antes de iniciar
+function init() {
+  if(typeof DATA === 'undefined' || !Array.isArray(DATA)) {
+    setTimeout(init, 50);
+    return;
+  }
+  loadPersisted();
+  atualizarKPIs();
+  renderGroups();
+  initCharts();
+}
+init();
 </script>
 </body>
 </html>
