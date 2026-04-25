@@ -143,8 +143,48 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--ink
 @media(max-width:1100px){.kpi-row{grid-template-columns:repeat(3,1fr);}.charts-row{grid-template-columns:1fr 1fr;}}
 @media(max-width:600px){.kpi-row{grid-template-columns:repeat(2,1fr);}.charts-row{grid-template-columns:1fr;}.main{padding:12px;}}
 </style>
+
+<style id="login-style">
+#login-screen{position:fixed;top:0;left:0;width:100%;height:100%;background:#0f1117;display:flex;align-items:center;justify-content:center;z-index:9999;}
+.login-box{background:#1a1d27;border:1px solid #2d3142;border-radius:16px;padding:40px 36px;width:100%;max-width:400px;text-align:center;}
+.login-logo{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,#12a05e,#2563eb);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;margin:0 auto 20px;}
+.login-title{font-size:20px;font-weight:600;color:#fff;margin-bottom:6px;}
+.login-sub{font-size:13px;color:#9197ab;margin-bottom:28px;}
+.login-input{width:100%;padding:11px 14px;border-radius:8px;border:1px solid #2d3142;background:#0f1117;color:#fff;font-size:14px;font-family:'IBM Plex Sans',sans-serif;outline:none;margin-bottom:12px;box-sizing:border-box;}
+.login-input:focus{border-color:#2563eb;}
+.login-input::placeholder{color:#5a5f73;}
+.login-btn{width:100%;padding:11px;border-radius:8px;background:#12a05e;color:#fff;font-size:14px;font-weight:500;font-family:'IBM Plex Sans',sans-serif;border:none;cursor:pointer;transition:background .15s;}
+.login-btn:hover{background:#0a6640;}
+.login-btn:disabled{background:#2d3142;color:#5a5f73;cursor:not-allowed;}
+.login-msg{font-size:12px;margin-top:12px;min-height:18px;}
+.login-msg.error{color:#f87171;}
+.login-msg.success{color:#4ade80;}
+.login-sent{display:none;}
+.login-sent-icon{font-size:40px;margin-bottom:16px;}
+.login-sent-title{font-size:18px;font-weight:600;color:#fff;margin-bottom:8px;}
+.login-sent-desc{font-size:13px;color:#9197ab;line-height:1.6;}
+.login-sent-email{color:#4ade80;font-weight:500;}
+</style>
 </head>
 <body>
+
+<div id="login-screen">
+  <div class="login-box">
+    <div id="login-form-area">
+      <div class="login-logo">EF</div>
+      <div class="login-title">Painel Operacional</div>
+      <div class="login-sub">Eurofarma · Copastur · Acesso restrito</div>
+      <input class="login-input" type="email" id="loginEmail" placeholder="seu@copastur.com.br" autocomplete="email">
+      <button class="login-btn" id="loginBtn" onclick="enviarLink()">Enviar link de acesso</button>
+      <div class="login-msg" id="loginMsg"></div>
+    </div>
+    <div class="login-sent" id="login-sent-area">
+      <div class="login-sent-icon">📧</div>
+      <div class="login-sent-title">Link enviado!</div>
+      <div class="login-sent-desc">Verifique sua caixa de entrada em<br><span class="login-sent-email" id="sentEmail"></span><br><br>Clique no link recebido para acessar o painel.</div>
+    </div>
+  </div>
+</div>
 <div class="topbar">
   <div class="tb-brand">
     <div class="tb-logo">EF</div>
@@ -580,6 +620,91 @@ loadPersisted();
 atualizarKPIs();
 renderGroups();
 initCharts();
+</script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC-UoqV3qzDyiFqK4AKH2YbLK4UVyZ5KWw",
+  authDomain: "dashboard-eurofarma.firebaseapp.com",
+  projectId: "dashboard-eurofarma",
+  storageBucket: "dashboard-eurofarma.firebasestorage.app",
+  messagingSenderId: "872934828702",
+  appId: "1:872934828702:web:aec12b4b953f9428aba98f"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+
+const actionCodeSettings = {
+  url: 'https://josejunior-netizen.github.io/dashboard-eurofarma/',
+  handleCodeInApp: true,
+};
+
+// Verificar se está voltando de um link de login
+if (isSignInWithEmailLink(auth, window.location.href)) {
+  let email = window.localStorage.getItem('emailParaLogin');
+  if (!email) {
+    email = window.prompt('Por favor confirme seu e-mail:');
+  }
+  signInWithEmailLink(auth, email, window.location.href)
+    .then(() => {
+      window.localStorage.removeItem('emailParaLogin');
+      document.getElementById('login-screen').style.display = 'none';
+      const ls = document.getElementById('login-style');
+      if(ls) ls.remove();
+    })
+    .catch((error) => {
+      document.getElementById('loginMsg').textContent = 'Link inválido ou expirado. Tente novamente.';
+      document.getElementById('loginMsg').className = 'login-msg error';
+    });
+} else {
+  auth.onAuthStateChanged((user) => {
+    if (user) {
+      document.getElementById('login-screen').style.display = 'none';
+      const ls = document.getElementById('login-style');
+      if(ls) ls.remove();
+    }
+  });
+}
+
+window.enviarLink = function() {
+  const email = document.getElementById('loginEmail').value.trim();
+  const msg = document.getElementById('loginMsg');
+  const btn = document.getElementById('loginBtn');
+
+  if (!email) {
+    msg.textContent = 'Digite seu e-mail.';
+    msg.className = 'login-msg error';
+    return;
+  }
+  if (!email.toLowerCase().endsWith('@copastur.com.br')) {
+    msg.textContent = 'Acesso restrito a e-mails @copastur.com.br';
+    msg.className = 'login-msg error';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  msg.textContent = '';
+
+  sendSignInLinkToEmail(auth, email, actionCodeSettings)
+    .then(() => {
+      window.localStorage.setItem('emailParaLogin', email);
+      document.getElementById('loginEmail').value = '';
+      document.getElementById('login-form-area').style.display = 'none';
+      document.getElementById('login-sent-area').style.display = 'block';
+      document.getElementById('sentEmail').textContent = email;
+    })
+    .catch((error) => {
+      msg.textContent = 'Erro ao enviar. Tente novamente.';
+      msg.className = 'login-msg error';
+      btn.disabled = false;
+      btn.textContent = 'Enviar link de acesso';
+    });
+};
 </script>
 </body>
 </html>
