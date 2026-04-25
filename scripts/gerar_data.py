@@ -221,7 +221,7 @@ def ler_os_xls(raw_bytes):
 
 # ── Processamento principal ───────────────────────────────────────────────────
 
-def processar(os_rows, sourcing, hotel_hist, hotel_emissores):
+def processar(os_rows, sourcing, hotel_hist_sgl, hotel_hist_dbl, hotel_emissores):
     """Agrupa OS por hotel+cidade, classifica e enriquece."""
     grupos = defaultdict(list)
     for r in os_rows:
@@ -427,7 +427,7 @@ def main():
     # 3. Ler e processar OS
     print("\n[3/4] Lendo OS do XLS...")
     os_rows  = ler_os_xls(xls_bytes)
-    enriched = processar(os_rows, sourcing, hotel_hist, hotel_emissores)
+    enriched = processar(os_rows, sourcing, hotel_hist_sgl, hotel_hist_dbl, hotel_emissores)
 
     # Stats
     from collections import Counter as C
