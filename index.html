@@ -281,6 +281,11 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);font-s
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
 .hotel-header.urgencia-critico{border-left:3px solid #DC2626 !important;}
 .hotel-header.urgencia-urgente{border-left:3px solid #D97706 !important;}
+
+.sort-select{appearance:none;-webkit-appearance:none;padding:5px 28px 5px 10px;border-radius:7px;font-size:11px;font-family:'Inter',sans-serif;font-weight:500;cursor:pointer;border:1px solid var(--border2);outline:none;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236B7280'/%3E%3C/svg%3E") no-repeat right 8px center;color:var(--ink2);transition:border .15s;}
+.sort-select:focus{border-color:var(--blue);}
+.sort-wrap{display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.sort-wrap label{font-size:10px;font-weight:600;color:var(--ink4);text-transform:uppercase;letter-spacing:.07em;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -393,6 +398,17 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--ink);font-s
       <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3);cursor:pointer;flex-shrink:0;">
         <input type="checkbox" id="filterMulti" onchange="goPage(1);renderGroups()">Só múltiplos consultores
       </label>
+      <div class="sort-wrap">
+        <label>Ordenar</label>
+        <select class="sort-select" id="sortOp" onchange="setSortOp(this.value)">
+          <option value="os_desc">Mais OS primeiro</option>
+          <option value="urgencia">Urgência primeiro</option>
+          <option value="checkin">Check-in próximo</option>
+          <option value="tipo">Tipo (div → sem ref → hist → acordo)</option>
+          <option value="hotel_az">Hotel A→Z</option>
+          <option value="cidade_az">Cidade A→Z</option>
+        </select>
+      </div>
       <div class="stats-bar">Mostrando <b id="statsCount">—</b> grupos · <b id="statsOS">—</b> OS</div>
     </div>
     <div class="pag-bar"><span id="pagInfo"></span><div class="pag-btns" id="pagBtns"></div></div>
@@ -805,6 +821,9 @@ function renderGroups() {
   const filtered = getFiltered();
   const total = filtered.length;
   const totalOS = filtered.reduce((s,g)=>s+g.os.length,0);
+  // Aplicar ordenação
+  filtered = sortarGrupos(filtered);
+
   document.getElementById('statsCount').textContent = total;
   document.getElementById('statsOS').textContent = totalOS;
 
@@ -1041,6 +1060,19 @@ function atualizarKPIs() {
   set('kpi-accord',     n_accord);
   set('kpi-hist',       n_hist);
   set('kpi-sem',        n_sem);
+  // Atualizar contadores nos chips de filtro
+  set('fc-accord', n_accord);
+  set('fc-hist',   n_hist);
+  set('fc-sem',    n_sem);
+  set('fc-div',    n_div);
+  // Atualizar subtítulo do topbar
+  const tbSub = document.getElementById('tbSub');
+  if(tbSub && typeof DATA_TIMESTAMP !== 'undefined')
+    tbSub.textContent = 'Eurofarma · Copastur · ' + DATA.length + ' grupos · ' + totalOS + ' OS · ' + DATA_TIMESTAMP;
+  const ts = document.getElementById('badgeTs');
+  if(ts && typeof DATA_TIMESTAMP !== 'undefined') ts.textContent = DATA_TIMESTAMP;
+  const sumTs = document.getElementById('sumTs');
+  if(sumTs && typeof DATA_TIMESTAMP !== 'undefined') sumTs.textContent = DATA_TIMESTAMP;
 }
 
 window.switchTab = function(tab) {
@@ -1100,8 +1132,16 @@ function renderConsultores() {
   else if(consFilter === 'emi') filtered = filtered.filter(c=>c.emi>0);
   else if(consFilter === 'critico') filtered = filtered.filter(c=>c.critico>0||c.urgente>0);
 
-  // Ordenar por total desc
-  filtered.sort((a,b) => b.total - a.total);
+  // Ordenar conforme seleção
+  const sortConsVal = document.getElementById('sortCons')?.value || 'total';
+  filtered.sort((a,b) => {
+    if(sortConsVal === 'total')   return b.total - a.total;
+    if(sortConsVal === 'urgente') return (b.critico*2+b.urgente) - (a.critico*2+a.urgente) || b.total-a.total;
+    if(sortConsVal === 'cot')     return b.cot - a.cot;
+    if(sortConsVal === 'emi')     return b.emi - a.emi;
+    if(sortConsVal === 'az')      return a.nome.localeCompare(b.nome,'pt-BR');
+    return 0;
+  });
   const maxTotal = filtered[0]?.total || 1;
 
   // KPIs
@@ -1128,6 +1168,16 @@ function renderConsultores() {
       <button class="hfbtn ${consFilter==='cot'?'on':''}" onclick="setConsFilter('cot',this)">Ag. Cotação</button>
       <button class="hfbtn ${consFilter==='emi'?'on':''}" onclick="setConsFilter('emi',this)">Ag. Emissão</button>
       <button class="hfbtn div ${consFilter==='critico'?'on div':''}" onclick="setConsFilter('critico',this)">🔴 Com urgência (${comCritico})</button>
+      <div class="sort-wrap" style="margin-left:auto">
+        <label>Ordenar</label>
+        <select class="sort-select" id="sortCons" onchange="renderConsultores()">
+          <option value="total">Mais OS primeiro</option>
+          <option value="urgente">Urgência primeiro</option>
+          <option value="cot">Mais cotações</option>
+          <option value="emi">Mais emissões</option>
+          <option value="az">Alfabético</option>
+        </select>
+      </div>
     </div>`;
 
   // Cards
@@ -1296,7 +1346,18 @@ window.renderHoteis = function() {
       <button class="hfbtn ac ${hoteisFiltro==='acordo'?'on ac':''}" onclick="setHoteisFiltro('acordo')">Com acordo (${nAcordo})</button>
       <button class="hfbtn ${hoteisFiltro==='sem'?'on':''}" onclick="setHoteisFiltro('sem')">Sem acordo (${nSem})</button>
       <input class="hsearch" placeholder="Buscar hotel ou cidade…" value="${hoteisSearch}" oninput="hoteisSearch=this.value;renderHoteis()">
-      <span style="margin-left:auto;font-size:11px;color:var(--ink4)">${data.length} hotéis exibidos</span>
+      <div class="sort-wrap">
+        <label>Ordenar</label>
+        <select class="sort-select" onchange="hoteisSort={col:this.value,dir:-1};renderHoteis()">
+          <option value="res">Volume (reservas)</option>
+          <option value="vt">Valor total gasto</option>
+          <option value="tm">Tarifa média</option>
+          <option value="n">Hotel A→Z</option>
+          <option value="c">Cidade A→Z</option>
+          <option value="cp">Consultor principal</option>
+        </select>
+      </div>
+      <span style="font-size:11px;color:var(--ink4)">${data.length} hotéis</span>
     </div>
 
     <div class="htable-wrap">
@@ -1368,6 +1429,43 @@ const PAGE_SIZE = 50;
 
 
 
+
+let sortOp = 'os_desc';
+window.setSortOp = function(val) {
+  sortOp = val;
+  goPage(1);
+  renderGroups();
+};
+
+function sortarGrupos(grupos) {
+  return [...grupos].sort((a, b) => {
+    if (sortOp === 'os_desc') {
+      return b.os.length - a.os.length;
+    }
+    if (sortOp === 'urgencia') {
+      const urgPrio = {critico: 0, urgente: 1, null: 2};
+      const ua = urgPrio[getUrgenciaGrupo(a)] ?? 2;
+      const ub = urgPrio[getUrgenciaGrupo(b)] ?? 2;
+      if (ua !== ub) return ua - ub;
+      return b.os.length - a.os.length;
+    }
+    if (sortOp === 'checkin') {
+      const getMinDias = g => {
+        const dias = g.os.map(o => getDiasParaCheckin(o.d)).filter(d => d !== null && d >= 0);
+        return dias.length ? Math.min(...dias) : 999;
+      };
+      return getMinDias(a) - getMinDias(b);
+    }
+    if (sortOp === 'tipo') {
+      const ORDER = {div:0, sem_ref:1, historico:2, acordo:3};
+      if (ORDER[a.tipo] !== ORDER[b.tipo]) return ORDER[a.tipo] - ORDER[b.tipo];
+      return b.os.length - a.os.length;
+    }
+    if (sortOp === 'hotel_az') return a.h.localeCompare(b.h, 'pt-BR');
+    if (sortOp === 'cidade_az') return a.c.localeCompare(b.c, 'pt-BR');
+    return 0;
+  });
+}
 
 function iniciarDashboard() {
   if (typeof DATA === 'undefined' || !Array.isArray(DATA)) {
