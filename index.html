@@ -1540,10 +1540,18 @@ window.sortHoteis = function(col) {
   renderHoteis();
 };
 
-loadPersisted();
-atualizarKPIs();
-renderGroups();
-initCharts();
+// Garantir que DATA foi carregado antes de iniciar
+function iniciarDashboard() {
+  if (typeof DATA === 'undefined' || !Array.isArray(DATA) || DATA.length === 0) {
+    setTimeout(iniciarDashboard, 100);
+    return;
+  }
+  loadPersisted();
+  atualizarKPIs();
+  renderGroups();
+  initCharts();
+}
+iniciarDashboard();
 </script>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
@@ -1705,77 +1713,6 @@ window.fazerLogin = function() {
 </body>
 </html
 </script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script>
-const firebaseConfig = {
-  apiKey: "AIzaSyC-UoqV3qzDyiFqK4AKH2YbLK4UVyZ5KWw",
-  authDomain: "dashboard-eurofarma.firebaseapp.com",
-  projectId: "dashboard-eurofarma",
-  appId: "1:872934828702:web:aec12b4b953f9428aba98f"
-};
-firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
 
-function mostrarDashboard() {
-  document.getElementById('login-screen').style.display = 'none';
-  const btnSenha = document.getElementById('btnAlterarSenha');
-  if(btnSenha) btnSenha.style.display = 'flex';
-}
-
-auth.onAuthStateChanged((user) => {
-  if (user) { mostrarDashboard(); }
-});
-
-window.fazerLogin = function() {
-  const email = document.getElementById('loginEmail').value.trim();
-  const senha = document.getElementById('loginPass').value;
-  const msg = document.getElementById('loginMsg');
-  const btn = document.getElementById('loginBtn');
-  msg.textContent=''; msg.className='login-msg';
-  if(!email){ msg.textContent='Digite seu e-mail.'; msg.className='login-msg error'; return; }
-  if(!email.toLowerCase().endsWith('@copastur.com.br')){ msg.textContent='Acesso restrito a @copastur.com.br'; msg.className='login-msg error'; return; }
-  if(!senha){ msg.textContent='Digite sua senha.'; msg.className='login-msg error'; return; }
-  btn.disabled=true; btn.textContent='Entrando...';
-  auth.signInWithEmailAndPassword(email,senha)
-    .then(()=>{ mostrarDashboard(); })
-    .catch((e)=>{
-      btn.disabled=false; btn.textContent='Entrar';
-      if(e.code==='auth/user-not-found'||e.code==='auth/wrong-password'||e.code==='auth/invalid-credential') msg.textContent='E-mail ou senha incorretos.';
-      else if(e.code==='auth/too-many-requests') msg.textContent='Muitas tentativas. Aguarde.';
-      else msg.textContent='Erro ao entrar. Tente novamente.';
-      msg.className='login-msg error';
-    });
-};
-
-window.abrirModalSenha = function() {
-  document.getElementById('modal-senha').classList.add('open');
-  ['senhaAtual','senhaNova','senhaConfirm'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('modalMsg').textContent='';
-  document.getElementById('modalMsg').className='modal-msg';
-  document.getElementById('btnSalvarSenha').disabled=false;
-  document.getElementById('btnSalvarSenha').textContent='Salvar';
-  setTimeout(()=>document.getElementById('senhaAtual').focus(),100);
-};
-window.fecharModalSenha = function() { document.getElementById('modal-senha').classList.remove('open'); };
-window.salvarSenha = function() {
-  const atual=document.getElementById('senhaAtual').value;
-  const nova=document.getElementById('senhaNova').value;
-  const conf=document.getElementById('senhaConfirm').value;
-  const msg=document.getElementById('modalMsg');
-  const btn=document.getElementById('btnSalvarSenha');
-  msg.className='modal-msg'; msg.textContent='';
-  if(!atual||!nova||!conf){ msg.textContent='Preencha todos os campos.'; msg.className='modal-msg error'; return; }
-  if(nova.length<6){ msg.textContent='Mínimo 6 caracteres.'; msg.className='modal-msg error'; return; }
-  if(nova!==conf){ msg.textContent='Senhas não coincidem.'; msg.className='modal-msg error'; return; }
-  btn.disabled=true; btn.textContent='Salvando...';
-  const user=auth.currentUser;
-  const cred=firebase.auth.EmailAuthProvider.credential(user.email,atual);
-  user.reauthenticateWithCredential(cred)
-    .then(()=>user.updatePassword(nova))
-    .then(()=>{ msg.textContent='Senha alterada!'; msg.className='modal-msg success'; btn.textContent='Salvo!'; setTimeout(fecharModalSenha,1500); })
-    .catch((e)=>{ btn.disabled=false; btn.textContent='Salvar'; msg.textContent=e.code==='auth/wrong-password'||e.code==='auth/invalid-credential'?'Senha atual incorreta.':'Erro. Tente novamente.'; msg.className='modal-msg error'; });
-};
-</script>
 </body>
 </html>
