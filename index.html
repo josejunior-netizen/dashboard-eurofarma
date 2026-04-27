@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Painel Operacional · Eurofarma · Copastur</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -338,6 +341,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
   </div>
   <div class="tb-right">
     <div class="tb-badge" id="badgeTs">Carregando...</div>
+    <div id="syncBadge" style="font-size:11px;font-family:'DM Mono',monospace;font-weight:500;color:rgba(255,255,255,.4);letter-spacing:.02em;padding:5px 10px;">● Offline</div>
     <button class="btn-senha" id="btnAlterarSenha" onclick="abrirModalSenha()">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><rect x="3" y="7" width="10" height="8" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>
       Alterar senha
@@ -372,6 +376,10 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     <div class="alert" id="multiAlert">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2L1 14h14L8 2z"/><path d="M8 7v3M8 12v.5"/></svg>
       <span id="multiAlertText"></span>
+    </div>
+    <div class="alert" id="dupHospAlert" style="background:#FEF2F2;border-color:#FECACA;color:#991B1B;">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 10v.5"/></svg>
+      <span id="dupHospText"></span>
     </div>
     <div class="toolbar" style="flex-direction:column;align-items:stretch;gap:10px;">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -729,7 +737,8 @@ const HOTEIS_ANALISE = [
 const STATE = {};
 const DONO = {};
 const OPEN = new Set();
-let currentFilter = 'all';
+// multi-seleção: Set de filtros ativos. 'all' = sem filtro
+const activeFilters = new Set();
 let currentPage = 1;
 const PAGE_SIZE = 50;
 
@@ -805,6 +814,8 @@ function getUrgenciaGrupo(g) {
 
 
 // Persistência localStorage
+// loadPersisted: carrega localStorage como estado inicial offline.
+// Após o login, onSnapshot do Firestore sobrescreve com os dados reais.
 function loadPersisted() {
   DATA.forEach((g,i) => {
     try { const d = localStorage.getItem('ef2_dono_'+i); if(d!==null) DONO[i]=d; } catch(e){}
@@ -812,12 +823,9 @@ function loadPersisted() {
       try { const s = localStorage.getItem('ef2_st_'+o.n); if(s) Object.assign(STATE[o.n],JSON.parse(s)); } catch(e){}
     });
   });
-  // Exibe timestamp da última geração (vem do data.js)
   if(typeof DATA_TIMESTAMP !== 'undefined') {
     const el = document.getElementById('badgeTs');
     if(el) el.textContent = DATA_TIMESTAMP;
-    // Atualiza também o sub e a barra do sumário
-    const sub = document.querySelector('.tb-sub');
     const subDyn = document.getElementById('tb-sub-dynamic');
     if(subDyn) subDyn.textContent = `Eurofarma · Copastur · ${DATA.length} grupos · ${DATA.reduce((s,g)=>s+g.os.length,0)} OS · ${DATA_TIMESTAMP}`;
     const sumTs = document.getElementById('sumTs');
@@ -831,26 +839,97 @@ function stripeClass(t){ return {acordo:'s-accord',historico:'s-hist',sem_ref:'s
 function isUrgent(d){ if(!d)return false; const[dd,mm]=d.split('/').map(Number); return mm<=4&&dd<=30; }
 function groupProg(g){ const done=g.os.filter(o=>STATE[o.n].status==='Sim').length; return{done,total:g.os.length,pct:Math.round(done/g.os.length*100)}; }
 
+// ── NORMALIZAÇÃO DE NOMES DE CONSULTORES ─────────────────────────────────────
+// Mapeia variações conhecidas para o nome canônico
+const NORM_CONS = {
+  'FLAVIA ALVES':    'FLÁVIA ALVES',
+  'FLAVIA RIBEIRO':  'FLÁVIA RIBEIRO',
+  'FATIMA VIEIRA':   'FÁTIMA VIEIRA',
+  'TATIANA SILVA':   'TATIANA SILVA',
+  'STEPHANIE BRUNO': 'STEPHANIE BRUNO',
+  'ISABELA TORRES':  'ISABELA TORRES',
+  // adicione outros pares se necessário
+};
+function normCons(name) {
+  if (!name) return name;
+  const up = name.trim().toUpperCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,''); // remove acentos para comparar
+  // Verifica se existe mapeamento direto (sem acento → com acento)
+  for (const [raw, canonical] of Object.entries(NORM_CONS)) {
+    const rawUp = raw.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    if (up === rawUp) return canonical;
+  }
+  // Caso não haja mapa, retorna title-case simples
+  return name.trim().replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+}
+
 function getFiltered() {
   const search = document.getElementById('searchInput').value.toLowerCase();
   const filterMulti = document.getElementById('filterMulti').checked;
+  const hasFilter = activeFilters.size > 0;
+  const tipoFilters = ['acordo','historico','sem_ref','div'];
+  const statusFilters = ['rec','cot_os','emi_os','critico','urgente'];
+
   return DATA.filter((g,i) => {
-    if(currentFilter==='rec' && g.os.length<2) return false;
-    if(currentFilter==='cot_os' && !g.os.some(o=>o.q==='Cotação')) return false;
-    if(currentFilter==='emi_os' && !g.os.some(o=>o.q==='Emissão')) return false;
-    if(currentFilter==='critico' && getUrgenciaGrupo(g) !== 'critico') return false;
-    if(currentFilter==='urgente' && !['critico','urgente'].includes(getUrgenciaGrupo(g))) return false;
-    if(currentFilter!=='all'&&currentFilter!=='rec'&&currentFilter!=='cot_os'&&currentFilter!=='emi_os'&&currentFilter!=='critico'&&currentFilter!=='urgente'&&g.tipo!==currentFilter) return false;
-    if(search){ const hay=(g.h+g.c+g.os.map(o=>o.cons).join(' ')+DONO[i]).toLowerCase(); if(!hay.includes(search))return false; }
-    if(filterMulti&&!g.mc)return false;
-    // Esconder grupos onde todas OS estão concluídas
-    if(g.os.every(o => STATE[o.n].status === 'Sim')) return false;
+    if (hasFilter) {
+      // Para filtros de tipo: OR dentro do grupo de tipo
+      const tipoAtivos = [...activeFilters].filter(f => tipoFilters.includes(f));
+      const statusAtivos = [...activeFilters].filter(f => statusFilters.includes(f));
+
+      let passaTipo = tipoAtivos.length === 0 || tipoAtivos.includes(g.tipo);
+
+      let passaStatus = statusAtivos.length === 0;
+      if (!passaStatus) {
+        passaStatus = statusAtivos.some(f => {
+          if (f === 'rec')     return g.os.length >= 2;
+          if (f === 'cot_os')  return g.os.some(o => o.q === 'Cotação');
+          if (f === 'emi_os')  return g.os.some(o => o.q === 'Emissão');
+          if (f === 'critico') return getUrgenciaGrupo(g) === 'critico';
+          if (f === 'urgente') return ['critico','urgente'].includes(getUrgenciaGrupo(g));
+          return false;
+        });
+      }
+      if (!passaTipo || !passaStatus) return false;
+    }
+    if (search) {
+      const hay = (g.h + g.c + g.os.map(o => o.cons).join(' ') + (DONO[i]||'')).toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    if (filterMulti && !g.mc) return false;
+    if (g.os.every(o => STATE[o.n].status === 'Sim')) return false;
     return true;
   });
 }
 
 function getAllConsultores() {
-  const set = new Set(); DATA.forEach(g=>g.os.forEach(o=>set.add(o.cons))); return [...set].sort();
+  const set = new Set();
+  DATA.forEach(g => g.os.forEach(o => set.add(normCons(o.cons))));
+  return [...set].sort();
+}
+
+// ── ALERTA DE HÓSPEDE DUPLICADO ───────────────────────────────────────────────
+function checkDupHosp() {
+  const seen = {}; // "NOME|DD/MM" -> [{hotel, osNum}]
+  DATA.forEach(g => {
+    g.os.forEach(o => {
+      if (!o.hosp || !o.d) return;
+      const key = o.hosp.trim().toUpperCase() + '|' + o.d.trim();
+      if (!seen[key]) seen[key] = [];
+      seen[key].push({ hotel: g.h, osNum: o.n });
+    });
+  });
+  const dups = Object.entries(seen).filter(([,v]) => v.length > 1);
+  const el = document.getElementById('dupHospAlert');
+  const txt = document.getElementById('dupHospText');
+  if (!el || !txt) return;
+  if (dups.length === 0) { el.style.display = 'none'; return; }
+  const msgs = dups.map(([key, ocorrs]) => {
+    const [nome, data] = key.split('|');
+    const hoteis = ocorrs.map(o => `${o.hotel} (#${o.osNum})`).join(', ');
+    return `<strong>${nome}</strong> em <strong>${data}</strong> → ${hoteis}`;
+  });
+  txt.innerHTML = `⚠ ${dups.length} hóspede(s) duplicado(s): ${msgs.join(' · ')}`;
+  el.style.display = 'flex';
 }
 
 function renderRef(g) {
@@ -947,7 +1026,7 @@ function renderGroups() {
     const emi = g.os.filter(o=>o.q==='Emissão').length;
     const donoVal = DONO[idx];
     const urgGrupo = getUrgenciaGrupo(g);
-    const consSet = [...new Set(g.os.map(o=>o.cons))];
+    const consSet = [...new Set(g.os.map(o => normCons(o.cons)))];
 
     const osRows = g.os.filter(o => STATE[o.n].status !== 'Sim').map(o => {
       const st = STATE[o.n];
@@ -966,7 +1045,7 @@ function renderGroups() {
       return `<tr class="${done?'done':''}">
         <td><span class="os-num">#${o.n}</span></td>
         <td>
-          <div style="font-size:12px;color:#374151;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${o.cons}">${o.cons}</div>
+          <div style="font-size:12px;color:#374151;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${normCons(o.cons)}">${normCons(o.cons)}</div>
           ${hospStr}
         </td>
         <td><span class="tag ${o.q==='Emissão'?'tag-emi':'tag-cot'}">${o.q}</span></td>
@@ -1047,16 +1126,24 @@ function renderGroups() {
 
   updateSummary();
   updateCharts();
+  checkDupHosp();
 }
 
 function toggleGroup(idx){ if(OPEN.has(idx))OPEN.delete(idx);else OPEN.add(idx); renderGroups(); }
-function setDono(idx,val){ DONO[idx]=val; try{localStorage.setItem('ef2_dono_'+idx,val);}catch(e){} renderGroups(); }
+function setDono(idx,val){
+  DONO[idx]=val;
+  fsSetDono(idx, val);
+  // localStorage como fallback local
+  try{localStorage.setItem('ef2_dono_'+idx,val);}catch(e){}
+  renderGroups();
+}
 function setStatus(n,sel){
   const val=sel.value.replace(' ✓',''); STATE[n].status=val;
   const map={'Pendente':'s-pend','Em andamento':'s-and','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
   sel.className=`sst ${map[val]||'s-pend'}`;
   const row=sel.closest('tr'); if(val==='Sim')row.classList.add('done');else row.classList.remove('done');
   updateProgBar(sel); updateSummary(); updateCharts();
+  fsSetOS(n, STATE[n]);
   try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}
 }
 function updateProgBar(el){
@@ -1068,10 +1155,36 @@ function updateProgBar(el){
   if(pf)pf.style.width=Math.round(done/rows.length*100)+'%';
   if(pl)pl.textContent=`${done}/${rows.length}`;
 }
-function setResp(n,v){STATE[n].resp=v;try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}}
-function setObs(n,v){STATE[n].obs=v;try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}}
-function setFilter(f,el){ currentFilter=f; currentPage=1;
-  document.querySelectorAll('.chip').forEach(c=>{const mine=c.getAttribute('onclick').includes(`'${f}'`);if(mine)c.classList.remove('off');else c.classList.add('off');});
+function setResp(n,v){
+  STATE[n].resp=v;
+  fsSetOS(n, STATE[n]);
+  try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}
+}
+function setObs(n,v){
+  STATE[n].obs=v;
+  fsSetOS(n, STATE[n]);
+  try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}
+}
+function setFilter(f, el) {
+  if (f === 'all') {
+    activeFilters.clear();
+  } else {
+    if (activeFilters.has(f)) activeFilters.delete(f);
+    else activeFilters.add(f);
+  }
+  // Atualizar visual dos chips
+  document.querySelectorAll('.chip').forEach(c => {
+    const onclick = c.getAttribute('onclick') || '';
+    const match = onclick.match(/'([^']+)'/);
+    if (!match) return;
+    const chipF = match[1];
+    if (chipF === 'all') {
+      c.classList.toggle('off', activeFilters.size > 0);
+    } else {
+      c.classList.toggle('off', !activeFilters.has(chipF));
+    }
+  });
+  currentPage = 1;
   renderGroups();
 }
 function updateSummary(){
@@ -1178,7 +1291,7 @@ function renderConsultores() {
   DATA.forEach((g,i) => {
     const dono = DONO[i];
     g.os.forEach(o => {
-      const cons = dono || o.cons;
+      const cons = normCons(dono || o.cons);
       if(!cons) return;
       if(!consMap[cons]) consMap[cons] = {
         nome: cons, total: 0, cot: 0, emi: 0,
@@ -1489,12 +1602,11 @@ function iniciarDashboard() {
   atualizarKPIs();
   renderGroups();
   initCharts();
+  checkDupHosp();
 }
 iniciarDashboard();
 </script>
 
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script>
 const firebaseConfig = {
   apiKey: "AIzaSyC-UoqV3qzDyiFqK4AKH2YbLK4UVyZ5KWw",
@@ -1504,11 +1616,79 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
+const db = firebase.firestore();
+
+// ── FIRESTORE: indicador de sync ──────────────────────────────────────────────
+let _syncTimeout = null;
+function showSync(ok) {
+  const el = document.getElementById('syncBadge');
+  if (!el) return;
+  clearTimeout(_syncTimeout);
+  el.textContent = ok ? '✓ Salvo' : '⟳ Salvando…';
+  el.style.color = ok ? '#4ADE80' : '#FCD34D';
+  if (ok) _syncTimeout = setTimeout(() => { el.textContent = '● Sincronizado'; el.style.color = '#4ADE80'; }, 2000);
+}
+
+// ── FIRESTORE: salvar status/resp/obs de uma OS ───────────────────────────────
+function fsSetOS(osNum, data) {
+  showSync(false);
+  db.collection('os_status').doc(String(osNum)).set(data, { merge: true })
+    .then(() => showSync(true))
+    .catch(e => { console.error('Firestore error:', e); showSync(true); });
+}
+
+// ── FIRESTORE: salvar dono de um grupo ────────────────────────────────────────
+function fsSetDono(idx, val) {
+  showSync(false);
+  db.collection('grupo_dono').doc(String(idx)).set({ dono: val })
+    .then(() => showSync(true))
+    .catch(e => { console.error('Firestore error:', e); showSync(true); });
+}
+
+let _fsListenerOS = null;
+let _fsListenerDono = null;
 
 function mostrarDashboard() {
   document.getElementById('login-screen').style.display = 'none';
   const btnSenha = document.getElementById('btnAlterarSenha');
   if(btnSenha) btnSenha.style.display = 'flex';
+  iniciarListenersFirestore();
+}
+
+// ── FIRESTORE: listener em tempo real para os_status ─────────────────────────
+function iniciarListenersFirestore() {
+  // Evita múltiplos listeners
+  if (_fsListenerOS) _fsListenerOS();
+  if (_fsListenerDono) _fsListenerDono();
+
+  _fsListenerOS = db.collection('os_status').onSnapshot(snapshot => {
+    let mudou = false;
+    snapshot.forEach(doc => {
+      const n = Number(doc.id);
+      if (STATE[n] !== undefined) {
+        const d = doc.data();
+        STATE[n].status = d.status || 'Pendente';
+        STATE[n].resp   = d.resp   || '';
+        STATE[n].obs    = d.obs    || '';
+        mudou = true;
+      }
+    });
+    if (mudou) {
+      renderGroups();
+      updateSummary();
+      updateCharts();
+    }
+  }, err => console.error('Listener os_status:', err));
+
+  _fsListenerDono = db.collection('grupo_dono').onSnapshot(snapshot => {
+    let mudou = false;
+    snapshot.forEach(doc => {
+      const idx = Number(doc.id);
+      const val = doc.data().dono || '';
+      if (DONO[idx] !== val) { DONO[idx] = val; mudou = true; }
+    });
+    if (mudou) renderGroups();
+  }, err => console.error('Listener grupo_dono:', err));
 }
 
 auth.onAuthStateChanged((user) => {
