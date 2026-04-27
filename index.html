@@ -914,17 +914,26 @@ function getAllConsultores() {
 // Chaves marcadas como "Tratada no OBT" (persistidas no Firestore)
 const _dupTratadas = new Set();
 
-function marcarDupTratada(key) {
-  _dupTratadas.add(key);
-  // Salvar no Firestore
-  db.collection('dup_tratadas').doc(key.replace(/[|/]/g,'_')).set({ key, ts: Date.now() })
-    .catch(e => console.error('Firestore dup:', e));
+function toggleDupTratada(key) {
+  const docId = key.replace(/[|/]/g,'_');
+  if (_dupTratadas.has(key)) {
+    // Desmarcar
+    _dupTratadas.delete(key);
+    db.collection('dup_tratadas').doc(docId).delete()
+      .catch(e => console.error('Firestore dup del:', e));
+  } else {
+    // Marcar
+    _dupTratadas.add(key);
+    db.collection('dup_tratadas').doc(docId).set({ key, ts: Date.now() })
+      .catch(e => console.error('Firestore dup set:', e));
+  }
   checkDupHosp();
 }
 
 // Listener Firestore para duplicatas tratadas
 function iniciarListenerDupTratadas() {
   db.collection('dup_tratadas').onSnapshot(snap => {
+    _dupTratadas.clear();
     snap.forEach(doc => _dupTratadas.add(doc.data().key));
     checkDupHosp();
   }, err => console.error('Listener dup_tratadas:', err));
@@ -942,7 +951,8 @@ function checkDupHosp() {
     });
   });
 
-  const dups = Object.entries(seen).filter(([k, v]) => v.length > 1 && !_dupTratadas.has(k));
+  // Mostra todas as duplicatas — tratadas ficam visíveis mas marcadas
+  const dups = Object.entries(seen).filter(([k, v]) => v.length > 1);
   const el   = document.getElementById('dupHospAlert');
   const list = document.getElementById('dupHospList');
   const cnt  = document.getElementById('dupHospCount');
@@ -950,34 +960,44 @@ function checkDupHosp() {
 
   if (dups.length === 0) { el.style.display = 'none'; return; }
 
-  cnt.textContent = `${dups.length} hóspede(s) com reserva duplicada`;
+  const pendentes = dups.filter(([k]) => !_dupTratadas.has(k)).length;
+  cnt.innerHTML = pendentes > 0
+    ? `${pendentes} hóspede(s) com reserva duplicada <span style="font-weight:400;opacity:.6;font-size:11px">(${dups.length - pendentes} tratada(s))</span>`
+    : `<span style="color:#166534">✓ Todas as duplicatas tratadas</span>`;
 
   list.innerHTML = dups.map(([key, ocorrs]) => {
     const [nome, data] = key.split('|');
     const safeKey = key.replace(/"/g, '&quot;');
+    const tratada = _dupTratadas.has(key);
 
     // Consultores únicos envolvidos
     const consSet = [...new Set(ocorrs.map(o => o.cons).filter(Boolean))];
     const consTags = consSet.map(c =>
-      `<span style="background:#FECACA;color:#7F1D1D;border-radius:5px;padding:1px 7px;font-size:10.5px;font-weight:700;">${c}</span>`
+      `<span style="background:${tratada?'#D1FAE5':'#FECACA'};color:${tratada?'#065F46':'#7F1D1D'};border-radius:5px;padding:1px 7px;font-size:10.5px;font-weight:700;">${c}</span>`
     ).join('');
 
     const hoteis = ocorrs.map(o =>
-      `<span style="color:#7F1D1D">${o.hotel} <span style="opacity:.7">(#${o.osNum})</span></span>`
-    ).join('<span style="color:#FECACA;margin:0 4px">→</span>');
+      `<span style="color:${tratada?'#6B7280':'#7F1D1D'}">${o.hotel} <span style="opacity:.6">(#${o.osNum})</span></span>`
+    ).join(`<span style="color:${tratada?'#9CA3AF':'#FECACA'};margin:0 4px">→</span>`);
 
-    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;background:#FFF5F5;border-radius:7px;padding:6px 10px;">
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:#991B1B;">
-        <strong style="font-size:12px">${nome}</strong>
+    const rowBg   = tratada ? '#F0FDF4' : '#FFF5F5';
+    const btnBg   = tratada ? '#D1FAE5' : '#FEE2E2';
+    const btnBorder = tratada ? '#6EE7B7' : '#FECACA';
+    const btnColor  = tratada ? '#065F46' : '#991B1B';
+    const btnLabel  = tratada ? '✓ Tratada no OBT' : 'Marcar como tratada no OBT';
+
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;background:${rowBg};border-radius:7px;padding:6px 10px;opacity:${tratada?'0.75':'1'};">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:${tratada?'#6B7280':'#991B1B'};">
+        <strong style="font-size:12px;${tratada?'text-decoration:line-through;':''}">${nome}</strong>
         <span style="opacity:.6">em</span>
         <strong>${data}</strong>
         <span style="opacity:.5">·</span>
         ${hoteis}
         ${consTags ? '<span style="opacity:.5">·</span>' + consTags : ''}
       </div>
-      <button onclick="marcarDupTratada('${safeKey}')"
-        style="flex-shrink:0;background:#FEE2E2;border:1px solid #FECACA;color:#991B1B;border-radius:6px;padding:3px 10px;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap;">
-        ✓ Tratada no OBT
+      <button onclick="toggleDupTratada('${safeKey}')"
+        style="flex-shrink:0;background:${btnBg};border:1px solid ${btnBorder};color:${btnColor};border-radius:6px;padding:3px 10px;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap;">
+        ${btnLabel}
       </button>
     </div>`;
   }).join('');
