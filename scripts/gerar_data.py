@@ -16,7 +16,7 @@ import unicodedata
 import re
 import requests
 from collections import defaultdict, Counter
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import openpyxl
 
 # ── Configuração ─────────────────────────────────────────────────────────────
@@ -28,6 +28,9 @@ OUTPUT_FILE  = "data.js"        # na raiz do repo (GitHub Pages serve daqui)
 
 # Tolerância de divergência de tarifa (12%)
 DIV_THRESHOLD = 0.12
+
+# Fuso horário de Brasília (UTC-3)
+TZ_BR = timezone(timedelta(hours=-3))
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -416,7 +419,7 @@ def main():
 
     # 1. Baixar arquivos
     print("\n[1/4] Baixando bases de dados...")
-    xls_bytes     = download_bytes(ONEDRIVE_URL, "SourceHoteis (OS)")
+    xls_bytes      = download_bytes(ONEDRIVE_URL, "SourceHoteis (OS)")
     sourcing_bytes = download_bytes(SOURCING_URL, "Sourcing 2026")
 
     # 2. Processar Sourcing e Histórico
@@ -437,9 +440,9 @@ def main():
     print(f"  Tipos: {dict(tipos)}")
     print(f"  Multi-consultores: {sum(1 for g in enriched if g['mc'])}")
 
-    # 4. Gerar data.js
+    # 4. Gerar data.js com horário de Brasília (UTC-3)
     print("\n[4/4] Gerando data.js...")
-    ts  = datetime.now().strftime("%d/%m/%Y %H:%M")
+    ts  = datetime.now(TZ_BR).strftime("%d/%m/%Y %H:%M")
     js  = gerar_data_js(enriched, ts)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(js)
