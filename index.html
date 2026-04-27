@@ -840,7 +840,7 @@ function getFiltered() {
     if(currentFilter==='emi_os' && !g.os.some(o=>o.q==='Emissão')) return false;
     if(currentFilter==='critico' && getUrgenciaGrupo(g) !== 'critico') return false;
     if(currentFilter==='urgente' && !['critico','urgente'].includes(getUrgenciaGrupo(g))) return false;
-    if(currentFilter!=='all'&&currentFilter!=='rec'&&currentFilter!=='cot_os'&&currentFilter!=='emi_os'&&g.tipo!==currentFilter) return false;
+    if(currentFilter!=='all'&&currentFilter!=='rec'&&currentFilter!=='cot_os'&&currentFilter!=='emi_os'&&currentFilter!=='critico'&&currentFilter!=='urgente'&&g.tipo!==currentFilter) return false;
     if(search){ const hay=(g.h+g.c+g.os.map(o=>o.cons).join(' ')+DONO[i]).toLowerCase(); if(!hay.includes(search))return false; }
     if(filterMulti&&!g.mc)return false;
     // Esconder grupos onde todas OS estão concluídas
