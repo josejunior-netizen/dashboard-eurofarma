@@ -1064,14 +1064,10 @@ function renderGroups() {
       </tr>`;
     }).join('');
 
-    const donoOptions = ['', ...allCons].map(c =>
-      `<option value="${c}" ${c===donoVal?'selected':''}>${c||'— Sem responsável —'}</option>`
-    ).join('');
-
-    const multiTag = g.mc ? `<span class="tag tag-multi">⚑ ${consSet.length} consultores</span>` : '';
-    const tarifaTag = g.tr ? `<span class="tag tag-t">Ref. R$ ${g.tr}</span>` : '';
-    const donoTag = donoVal ? `<span class="tag tag-dono">👤 ${donoVal}</span>` : '';
+    const tarifaTag = g.tr ? `<span class="tag tag-t">Ref. R$ ${g.tr}</span>` : '';
     const recTag = g.os.length >= 2 ? `<span class="tag" style="background:#f5f3ff;color:#5b21b6;border:1px solid #ddd6fe">${g.os.length} OS</span>` : `<span class="tag tag-n">1 OS</span>`;
+    const consTags = consSet.map(c => `<span class="tag" style="background:#EEF0F8;color:#4B5268;border:1.5px solid #C8CCDE;font-size:10px">👤 ${c}</span>`).join('');
+
 
     return `<div class="hotel-group" id="grp-${idx}">
       <div class="hotel-header ${isOpen?'open':''}" id="hdr-${idx}" onclick="toggleGroup(${idx})">
@@ -1088,16 +1084,11 @@ function renderGroups() {
               ${cot?`<span class="tag tag-cot">${cot} cot.</span>`:''}
               ${emi?`<span class="tag tag-emi">${emi} emi.</span>`:''}
               ${tarifaTag}
-              ${multiTag}
-              ${donoTag}
+              ${consTags}
               ${urgGrupo === 'critico' ? '<span class="tag tag-critico">🔴 Check-in hoje/amanhã</span>' : urgGrupo === 'urgente' ? '<span class="tag tag-urgente">🟡 2-3 dias</span>' : ''}
             </div>
           </div>
-          <div class="hh-actions" onclick="event.stopPropagation()">
-            <span class="dono-label">Responsável</span>
-            <select class="dono-select" onchange="setDono(${idx},this.value)">
-              ${donoOptions}
-            </select>
+          <div class="hh-actions">
             ${prog.total>0?`<div class="prog-wrap"><div class="prog-label">${prog.done}/${prog.total}</div><div class="prog-track"><div class="prog-fill" style="width:${prog.pct}%"></div></div></div>`:''}
             <svg class="chevron ${isOpen?'open':''}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 4l4 4-4 4"/></svg>
           </div>
@@ -1597,7 +1588,7 @@ function iniciarDashboard() {
   });
   // Inicializar STATE e DONO
   DATA.forEach(g => g.os.forEach(o => { STATE[o.n] = {status:'Pendente',resp:'',obs:''}; }));
-  DATA.forEach((g,i) => { DONO[i] = g.dono || ''; });
+  DATA.forEach((g,i) => { DONO[i] = ''; });
   loadPersisted();
   atualizarKPIs();
   renderGroups();
