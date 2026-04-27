@@ -340,7 +340,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     </div>
   </div>
   <div class="tb-right">
-    <div class="tb-badge" id="badgeTs">Carregando...</div>
+    <div class="tb-badge" id="badgeTs" title="Última atualização dos dados">🗓 Carregando...</div>
     <div id="syncBadge" style="font-size:11px;font-family:'DM Mono',monospace;font-weight:500;color:rgba(255,255,255,.4);letter-spacing:.02em;padding:5px 10px;">● Offline</div>
     <button class="btn-senha" id="btnAlterarSenha" onclick="abrirModalSenha()">
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px"><rect x="3" y="7" width="10" height="8" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>
@@ -825,7 +825,7 @@ function loadPersisted() {
   });
   if(typeof DATA_TIMESTAMP !== 'undefined') {
     const el = document.getElementById('badgeTs');
-    if(el) el.textContent = DATA_TIMESTAMP;
+    if(el) el.textContent = '↻ ' + DATA_TIMESTAMP;
     const subDyn = document.getElementById('tb-sub-dynamic');
     if(subDyn) subDyn.textContent = `Eurofarma · Copastur · ${DATA.length} grupos · ${DATA.reduce((s,g)=>s+g.os.length,0)} OS · ${DATA_TIMESTAMP}`;
     const sumTs = document.getElementById('sumTs');
@@ -1617,8 +1617,33 @@ function showSync(ok) {
   clearTimeout(_syncTimeout);
   el.textContent = ok ? '✓ Salvo' : '⟳ Salvando…';
   el.style.color = ok ? '#4ADE80' : '#FCD34D';
-  if (ok) _syncTimeout = setTimeout(() => { el.textContent = '● Sincronizado'; el.style.color = '#4ADE80'; }, 2000);
+  if (ok) _syncTimeout = setTimeout(() => { el.textContent = '● Conectado'; el.style.color = '#4ADE80'; }, 2000);
 }
+
+function setSyncConectado() {
+  const el = document.getElementById('syncBadge');
+  if (!el) return;
+  el.textContent = '● Conectado';
+  el.style.color = '#4ADE80';
+}
+
+// ── AUTO-RELOAD: detecta nova versão do data.js a cada 5 min ─────────────────
+let _lastDataTs = typeof DATA_TIMESTAMP !== 'undefined' ? DATA_TIMESTAMP : null;
+function verificarAtualizacao() {
+  const url = 'data.js?_=' + Date.now();
+  fetch(url, { cache: 'no-store' })
+    .then(r => r.text())
+    .then(txt => {
+      const m = txt.match(/DATA_TIMESTAMP\s*=\s*['"]([^'"]+)['"]/);
+      if (m && m[1] && _lastDataTs && m[1] !== _lastDataTs) {
+        const badge = document.getElementById('syncBadge');
+        if (badge) { badge.textContent = '🔄 Atualizando…'; badge.style.color = '#FCD34D'; }
+        setTimeout(() => location.reload(), 1500);
+      }
+    })
+    .catch(() => {});
+}
+setInterval(verificarAtualizacao, 5 * 60 * 1000); // a cada 5 minutos
 
 // ── FIRESTORE: salvar status/resp/obs de uma OS ───────────────────────────────
 function fsSetOS(osNum, data) {
@@ -1653,6 +1678,7 @@ function iniciarListenersFirestore() {
   if (_fsListenerDono) _fsListenerDono();
 
   _fsListenerOS = db.collection('os_status').onSnapshot(snapshot => {
+    setSyncConectado();
     let mudou = false;
     snapshot.forEach(doc => {
       const n = Number(doc.id);
