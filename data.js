@@ -1,5 +1,5 @@
-// Gerado automaticamente em 28/04/2026 18:44
-const DATA_TIMESTAMP = "28/04/2026 18:44";
+// Gerado automaticamente em 28/04/2026 19:17
+const DATA_TIMESTAMP = "28/04/2026 19:17";
 const DATA = [
   {h:"BEACH CLASS CONVENTION BY HOM",c:"Recife",tipo:"historico",tr:362,dono:"Isabela Torres",mc:false,nrh:59,nem:5,ht:[340, 355, 369, 373, 426],ht_sgl:[340, 355, 426],ht_dbl:[369, 373],tr_sgl:345,tr_dbl:369,src:null,os:[{n:30700,q:"Emissão",cons:"Tatiana Silva",t:369,d:"06/04",hosp:"YURI MARTINS",apto:"Duplo",obs_orig:"REUNIÃO DE CICLO 3"},{n:30712,q:"Emissão",cons:"Tatiana Silva",t:369,d:"06/04",hosp:"APYARA RODRIGUES",apto:"Duplo",obs_orig:"REUNIÃO DE CICLO 3"},{n:30716,q:"Emissão",cons:"Tatiana Silva",t:369,d:"06/04",hosp:"JORGE SILVA",apto:"Duplo",obs_orig:"REUNIÃO DE CICLO 3"}]},
   {h:"Hotel Aliança",c:"RIO DO SUL / SC",tipo:"acordo",tr:288.0,dono:"Diego Nascimento",mc:false,nrh:53,nem:10,ht:[288, 289, 376],ht_sgl:[288, 289, 376],ht_dbl:[],tr_sgl:290,tr_dbl:null,src:{ti:288.0,td:414.0,tt:"Tarifa Fixa",cond:"LRA",bk:"na",em:"na",cafe:"Sim"},os:[{n:35443,q:"Emissão",cons:"Marcia Abreu",t:288,d:"13/05",hosp:"JEAN ZIMERMANN",apto:"Individual",obs_orig:"Tarifa negociada em 282,00 diária."},{n:35444,q:"Emissão",cons:"Marcia Abreu",t:288,d:"25/05",hosp:"JEAN ZIMERMANN",apto:"Individual",obs_orig:"Tarifa negociada em 282,00 diária."},{n:35446,q:"Emissão",cons:"Marcia Abreu",t:288,d:"10/06",hosp:"JEAN ZIMERMANN",apto:"Individual",obs_orig:"Tarifa negociada em 282,00 diária."}]},
