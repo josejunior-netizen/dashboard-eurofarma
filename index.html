@@ -354,6 +354,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
   <button class="tab on" id="tab-btn-op" onclick="switchTab('op')">Painel Operacional</button>
   <button class="tab" id="tab-btn-cons" onclick="switchTab('cons')">Carga por Consultor</button>
   <button class="tab" id="tab-btn-hoteis" onclick="switchTab('hoteis')">Análise Hotelaria 2026</button>
+  <button class="tab" id="tab-btn-historico" onclick="switchTab('historico')">📋 Histórico</button>
 </div>
 
 <div class="main">
@@ -377,12 +378,9 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
       <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M8 2L1 14h14L8 2z"/><path d="M8 7v3M8 12v.5"/></svg>
       <span id="multiAlertText"></span>
     </div>
-    <div id="dupHospAlert" style="display:none;flex-direction:column;gap:6px;background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;padding:10px 14px;margin-bottom:2px;">
-      <div style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:#991B1B;">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 10v.5"/></svg>
-        <span id="dupHospCount"></span>
-      </div>
-      <div id="dupHospList" style="display:flex;flex-direction:column;gap:5px;"></div>
+    <div class="alert" id="dupHospAlert" style="background:#FEF2F2;border-color:#FECACA;color:#991B1B;">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0"><circle cx="8" cy="8" r="6"/><path d="M8 5v3M8 10v.5"/></svg>
+      <span id="dupHospText"></span>
     </div>
     <div class="toolbar" style="flex-direction:column;align-items:stretch;gap:10px;">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -437,6 +435,11 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
   <!-- TAB: CONSULTORES -->
   <div id="tab-cons" style="display:none">
     <div id="consultores-content"></div>
+  </div>
+
+  <!-- TAB: HISTÓRICO -->
+  <div id="tab-historico" style="display:none">
+    <div id="historico-content"></div>
   </div>
 
   <!-- TAB: HOTELARIA -->
@@ -911,97 +914,27 @@ function getAllConsultores() {
 }
 
 // ── ALERTA DE HÓSPEDE DUPLICADO ───────────────────────────────────────────────
-// Chaves marcadas como "Tratada no OBT" (persistidas no Firestore)
-const _dupTratadas = new Set();
-
-function toggleDupTratada(key) {
-  const docId = key.replace(/[|/]/g,'_');
-  if (_dupTratadas.has(key)) {
-    // Desmarcar
-    _dupTratadas.delete(key);
-    db.collection('dup_tratadas').doc(docId).delete()
-      .catch(e => console.error('Firestore dup del:', e));
-  } else {
-    // Marcar
-    _dupTratadas.add(key);
-    db.collection('dup_tratadas').doc(docId).set({ key, ts: Date.now() })
-      .catch(e => console.error('Firestore dup set:', e));
-  }
-  checkDupHosp();
-}
-
-// Listener Firestore para duplicatas tratadas
-function iniciarListenerDupTratadas() {
-  db.collection('dup_tratadas').onSnapshot(snap => {
-    _dupTratadas.clear();
-    snap.forEach(doc => _dupTratadas.add(doc.data().key));
-    checkDupHosp();
-  }, err => console.error('Listener dup_tratadas:', err));
-}
-
 function checkDupHosp() {
-  // "NOME|DD/MM" -> [{hotel, osNum, cons}]
-  const seen = {};
+  const seen = {}; // "NOME|DD/MM" -> [{hotel, osNum}]
   DATA.forEach(g => {
     g.os.forEach(o => {
       if (!o.hosp || !o.d) return;
       const key = o.hosp.trim().toUpperCase() + '|' + o.d.trim();
       if (!seen[key]) seen[key] = [];
-      seen[key].push({ hotel: g.h, osNum: o.n, cons: normCons(o.cons) });
+      seen[key].push({ hotel: g.h, osNum: o.n });
     });
   });
-
-  // Mostra todas as duplicatas — tratadas ficam visíveis mas marcadas
-  const dups = Object.entries(seen).filter(([k, v]) => v.length > 1);
-  const el   = document.getElementById('dupHospAlert');
-  const list = document.getElementById('dupHospList');
-  const cnt  = document.getElementById('dupHospCount');
-  if (!el || !list || !cnt) return;
-
+  const dups = Object.entries(seen).filter(([,v]) => v.length > 1);
+  const el = document.getElementById('dupHospAlert');
+  const txt = document.getElementById('dupHospText');
+  if (!el || !txt) return;
   if (dups.length === 0) { el.style.display = 'none'; return; }
-
-  const pendentes = dups.filter(([k]) => !_dupTratadas.has(k)).length;
-  cnt.innerHTML = pendentes > 0
-    ? `${pendentes} hóspede(s) com reserva duplicada <span style="font-weight:400;opacity:.6;font-size:11px">(${dups.length - pendentes} tratada(s))</span>`
-    : `<span style="color:#166534">✓ Todas as duplicatas tratadas</span>`;
-
-  list.innerHTML = dups.map(([key, ocorrs]) => {
+  const msgs = dups.map(([key, ocorrs]) => {
     const [nome, data] = key.split('|');
-    const safeKey = key.replace(/"/g, '&quot;');
-    const tratada = _dupTratadas.has(key);
-
-    // Consultores únicos envolvidos
-    const consSet = [...new Set(ocorrs.map(o => o.cons).filter(Boolean))];
-    const consTags = consSet.map(c =>
-      `<span style="background:${tratada?'#D1FAE5':'#FECACA'};color:${tratada?'#065F46':'#7F1D1D'};border-radius:5px;padding:1px 7px;font-size:10.5px;font-weight:700;">${c}</span>`
-    ).join('');
-
-    const hoteis = ocorrs.map(o =>
-      `<span style="color:${tratada?'#6B7280':'#7F1D1D'}">${o.hotel} <span style="opacity:.6">(#${o.osNum})</span></span>`
-    ).join(`<span style="color:${tratada?'#9CA3AF':'#FECACA'};margin:0 4px">→</span>`);
-
-    const rowBg   = tratada ? '#F0FDF4' : '#FFF5F5';
-    const btnBg   = tratada ? '#D1FAE5' : '#FEE2E2';
-    const btnBorder = tratada ? '#6EE7B7' : '#FECACA';
-    const btnColor  = tratada ? '#065F46' : '#991B1B';
-    const btnLabel  = tratada ? '✓ Tratada no OBT' : 'Marcar como tratada no OBT';
-
-    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;background:${rowBg};border-radius:7px;padding:6px 10px;opacity:${tratada?'0.75':'1'};">
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:${tratada?'#6B7280':'#991B1B'};">
-        <strong style="font-size:12px;${tratada?'text-decoration:line-through;':''}">${nome}</strong>
-        <span style="opacity:.6">em</span>
-        <strong>${data}</strong>
-        <span style="opacity:.5">·</span>
-        ${hoteis}
-        ${consTags ? '<span style="opacity:.5">·</span>' + consTags : ''}
-      </div>
-      <button onclick="toggleDupTratada('${safeKey}')"
-        style="flex-shrink:0;background:${btnBg};border:1px solid ${btnBorder};color:${btnColor};border-radius:6px;padding:3px 10px;font-size:10.5px;font-weight:600;cursor:pointer;white-space:nowrap;">
-        ${btnLabel}
-      </button>
-    </div>`;
-  }).join('');
-
+    const hoteis = ocorrs.map(o => `${o.hotel} (#${o.osNum})`).join(', ');
+    return `<strong>${nome}</strong> em <strong>${data}</strong> → ${hoteis}`;
+  });
+  txt.innerHTML = `⚠ ${dups.length} hóspede(s) duplicado(s): ${msgs.join(' · ')}`;
   el.style.display = 'flex';
 }
 
@@ -1118,7 +1051,11 @@ function renderGroups() {
       return `<tr class="${done?'done':''}">
         <td><span class="os-num">#${o.n}</span></td>
         <td>
-          <div style="font-size:12px;color:#374151;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${normCons(o.cons)}">${normCons(o.cons)}</div>
+          <select class="il" style="font-size:12px;max-width:160px;font-weight:500;color:#374151;padding:2px 6px;cursor:pointer"
+            title="Alterar consultor responsável"
+            onchange="setCons(${o.n},this.value)">
+            ${getAllConsultores().map(c => `<option value="${c}" ${(STATE[o.n].cons_override||normCons(o.cons))===c?'selected':''}>${c}</option>`).join('')}
+          </select>
           ${hospStr}
         </td>
         <td><span class="tag ${o.q==='Emissão'?'tag-emi':'tag-cot'}">${o.q}</span></td>
@@ -1202,11 +1139,15 @@ function setDono(idx,val){
   renderGroups();
 }
 function setStatus(n,sel){
+  const valAntes = STATE[n].status;
   const val=sel.value.replace(' ✓',''); STATE[n].status=val;
   const map={'Pendente':'s-pend','Em andamento':'s-and','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
   sel.className=`sst ${map[val]||'s-pend'}`;
   const row=sel.closest('tr'); if(val==='Sim')row.classList.add('done');else row.classList.remove('done');
   updateProgBar(sel); updateSummary(); updateCharts();
+  // Buscar nome do hotel para histórico
+  const hotelNome = (() => { for(const g of DATA) { if(g.os.some(o=>o.n===n)) return g.h; } return ''; })();
+  if(valAntes !== val) gravarHistorico(n, 'status', valAntes, val, hotelNome);
   fsSetOS(n, STATE[n]);
   try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}
 }
@@ -1220,12 +1161,24 @@ function updateProgBar(el){
   if(pl)pl.textContent=`${done}/${rows.length}`;
 }
 function setResp(n,v){
+  const antes = STATE[n].resp;
   STATE[n].resp=v;
+  const hotelNome = (() => { for(const g of DATA) { if(g.os.some(o=>o.n===n)) return g.h; } return ''; })();
+  if(antes !== v && v) gravarHistorico(n, 'responsável', antes, v, hotelNome);
   fsSetOS(n, STATE[n]);
   try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}
 }
 function setObs(n,v){
   STATE[n].obs=v;
+  fsSetOS(n, STATE[n]);
+  try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}
+}
+
+function setCons(n, v) {
+  const antes = STATE[n].cons_override || (() => { for(const g of DATA) for(const o of g.os) if(o.n===n) return normCons(o.cons); return ''; })();
+  STATE[n].cons_override = v;
+  const hotelNome = (() => { for(const g of DATA) { if(g.os.some(o=>o.n===n)) return g.h; } return ''; })();
+  if(antes !== v && v) gravarHistorico(n, 'consultor', antes, v, hotelNome);
   fsSetOS(n, STATE[n]);
   try{localStorage.setItem('ef2_st_'+n,JSON.stringify(STATE[n]));}catch(e){}
 }
@@ -1329,15 +1282,17 @@ function atualizarKPIs() {
 }
 
 window.switchTab = function(tab) {
-  ['op','cons','hoteis'].forEach(t => {
+  ['op','cons','hoteis','historico'].forEach(t => {
     const el = document.getElementById('tab-'+t);
     if(el) el.style.display = t===tab ? 'block' : 'none';
   });
-  document.getElementById('tab-btn-op').className    = 'tab' + (tab==='op' ? ' on' : '');
-  document.getElementById('tab-btn-cons').className  = 'tab' + (tab==='cons' ? ' on' : '');
-  document.getElementById('tab-btn-hoteis').className= 'tab' + (tab==='hoteis' ? ' on' : '');
+  document.getElementById('tab-btn-op').className       = 'tab' + (tab==='op' ? ' on' : '');
+  document.getElementById('tab-btn-cons').className     = 'tab' + (tab==='cons' ? ' on' : '');
+  document.getElementById('tab-btn-hoteis').className   = 'tab' + (tab==='hoteis' ? ' on' : '');
+  document.getElementById('tab-btn-historico').className= 'tab' + (tab==='historico' ? ' on' : '');
   if(tab==='cons') renderConsultores();
   if(tab==='hoteis') renderHoteis();
+  if(tab==='historico') renderHistorico();
 };
 
 function getInitials(name) {
@@ -1642,6 +1597,111 @@ window.sortHoteis = function(col) {
   renderHoteis();
 };
 
+// ── HISTÓRICO DE ALTERAÇÕES ─────────────────────────────────────────────────
+async function renderHistorico() {
+  const c = document.getElementById('historico-content');
+  if(!c) return;
+  c.innerHTML = '<div style="padding:40px;text-align:center;color:var(--ink4)">⟳ Carregando histórico…</div>';
+
+  try {
+    const snap = await db.collection('historico_alteracoes')
+      .orderBy('ts', 'desc')
+      .limit(200)
+      .get();
+
+    if(snap.empty) {
+      c.innerHTML = '<div style="padding:40px;text-align:center;color:var(--ink4)">Nenhuma alteração registrada ainda.</div>';
+      return;
+    }
+
+    // Agrupar por usuário para o ranking
+    const userMap = {};
+    const rows = [];
+    snap.forEach(doc => {
+      const d = doc.data();
+      const nome = d.usuario || d.email || '?';
+      if(!userMap[nome]) userMap[nome] = { nome, email: d.email, total: 0, status: 0, resp: 0, obs: 0, cons: 0 };
+      userMap[nome].total++;
+      if(d.campo === 'status') userMap[nome].status++;
+      else if(d.campo === 'responsável') userMap[nome].resp++;
+      else if(d.campo === 'observação') userMap[nome].obs++;
+      else if(d.campo === 'consultor') userMap[nome].cons++;
+      rows.push(d);
+    });
+
+    // Ranking
+    const ranking = Object.values(userMap).sort((a,b) => b.total - a.total);
+    const maxUso = ranking[0]?.total || 1;
+
+    const rankingHtml = `
+      <div style="background:#fff;border-radius:var(--rl);border:1px solid var(--border);padding:20px;margin-bottom:16px;box-shadow:var(--shadow)">
+        <div style="font-size:11px;font-weight:700;color:var(--ink4);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px">🏆 Ranking de uso do painel</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">
+          ${ranking.map((u,i) => {
+            const initials = u.nome.split(' ').slice(0,2).map(w=>w[0].toUpperCase()).join('');
+            const pct = Math.round(u.total/maxUso*100);
+            const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+            return `<div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surf2);border-radius:8px">
+              <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,var(--blue),var(--green));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0">${initials}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12px;font-weight:600;color:var(--ink)">${medal} ${u.nome}</div>
+                <div style="font-size:10px;color:var(--ink4);margin:2px 0">${u.total} ações · ${u.status} status · ${u.resp} resp.</div>
+                <div style="background:var(--border);border-radius:3px;height:4px;margin-top:4px">
+                  <div style="width:${pct}%;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--blue),var(--green))"></div>
+                </div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+
+    // Tabela de histórico
+    const fmtTs = ts => {
+      const d = new Date(ts);
+      return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    };
+
+    const campoIcon = c => ({status:'🔄',responsável:'👤',observação:'📝',consultor:'✏️'}[c]||'•');
+
+    const tabelaHtml = `
+      <div style="background:#fff;border-radius:var(--rl);border:1px solid var(--border);overflow:hidden;box-shadow:var(--shadow)">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--ink4);text-transform:uppercase;letter-spacing:.08em">
+          Últimas ${rows.length} alterações
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="background:var(--surf3)">
+            <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)">Data/Hora</th>
+            <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)">Usuário</th>
+            <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)">OS / Hotel</th>
+            <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)">Campo</th>
+            <th style="padding:9px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border)">De → Para</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r => `<tr style="border-bottom:1px solid #F2F3F8">
+              <td style="padding:8px 14px;color:var(--ink4);font-family:'DM Mono',monospace;font-size:11px;white-space:nowrap">${fmtTs(r.ts)}</td>
+              <td style="padding:8px 14px;font-weight:600;color:var(--ink)">${r.usuario||r.email||'?'}</td>
+              <td style="padding:8px 14px">
+                <span style="font-family:'DM Mono',monospace;font-size:10px;background:var(--blue-l);color:var(--blue);padding:1px 6px;border-radius:4px">#${r.osNum}</span>
+                <span style="font-size:11px;color:var(--ink4);margin-left:5px">${r.hotelNome||''}</span>
+              </td>
+              <td style="padding:8px 14px">${campoIcon(r.campo)} <span style="color:var(--ink2)">${r.campo}</span></td>
+              <td style="padding:8px 14px;color:var(--ink3)">
+                <span style="text-decoration:line-through;opacity:.5">${r.valorAntes||'—'}</span>
+                <span style="margin:0 6px;color:var(--ink4)">→</span>
+                <span style="font-weight:600;color:var(--ink)">${r.valorDepois||'—'}</span>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    c.innerHTML = rankingHtml + tabelaHtml;
+
+  } catch(e) {
+    c.innerHTML = `<div style="padding:40px;text-align:center;color:var(--red)">Erro ao carregar histórico: ${e.message}</div>`;
+  }
+}
+
 // Garantir que DATA foi carregado antes de iniciar
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
@@ -1660,7 +1720,7 @@ function iniciarDashboard() {
     return a.h.localeCompare(b.h,'pt-BR');
   });
   // Inicializar STATE e DONO
-  DATA.forEach(g => g.os.forEach(o => { STATE[o.n] = {status:'Pendente',resp:'',obs:''}; }));
+  DATA.forEach(g => g.os.forEach(o => { STATE[o.n] = {status:'Pendente',resp:'',obs:'',cons_override:'',q_orig:o.q}; }));
   DATA.forEach((g,i) => { DONO[i] = ''; });
   loadPersisted();
   atualizarKPIs();
@@ -1719,11 +1779,31 @@ function verificarAtualizacao() {
 setInterval(verificarAtualizacao, 5 * 60 * 1000); // a cada 5 minutos
 
 // ── FIRESTORE: salvar status/resp/obs de uma OS ───────────────────────────────
-function fsSetOS(osNum, data) {
+function fsSetOS(osNum, data, extraFields) {
   showSync(false);
-  db.collection('os_status').doc(String(osNum)).set(data, { merge: true })
+  // Incluir q_orig para detectar mudança de etapa futuramente
+  const qAtual = (() => { for(const g of DATA) for(const o of g.os) if(o.n===osNum) return o.q; return null; })();
+  const payload = { ...data, ...(extraFields || {}), q_orig: qAtual || data.q_orig || '' };
+  db.collection('os_status').doc(String(osNum)).set(payload, { merge: true })
     .then(() => showSync(true))
     .catch(e => { console.error('Firestore error:', e); showSync(true); });
+}
+
+// ── HISTÓRICO DE ALTERAÇÕES ───────────────────────────────────────────────────
+function gravarHistorico(osNum, campo, valorAntes, valorDepois, hotelNome) {
+  const user = firebase.auth().currentUser;
+  if (!user) return;
+  const nomeUsuario = user.displayName || user.email.split('@')[0];
+  db.collection('historico_alteracoes').add({
+    osNum,
+    hotelNome: hotelNome || '',
+    campo,
+    valorAntes,
+    valorDepois,
+    usuario: nomeUsuario,
+    email: user.email,
+    ts: Date.now()
+  }).catch(e => console.error('Historico error:', e));
 }
 
 // ── FIRESTORE: salvar dono de um grupo ────────────────────────────────────────
@@ -1742,7 +1822,6 @@ function mostrarDashboard() {
   const btnSenha = document.getElementById('btnAlterarSenha');
   if(btnSenha) btnSenha.style.display = 'flex';
   iniciarListenersFirestore();
-  iniciarListenerDupTratadas();
 }
 
 // ── FIRESTORE: listener em tempo real para os_status ─────────────────────────
@@ -1758,9 +1837,26 @@ function iniciarListenersFirestore() {
       const n = Number(doc.id);
       if (STATE[n] !== undefined) {
         const d = doc.data();
-        STATE[n].status = d.status || 'Pendente';
-        STATE[n].resp   = d.resp   || '';
-        STATE[n].obs    = d.obs    || '';
+        // Detectar se o tipo da OS mudou para Emissão (nova etapa → resetar para Pendente)
+        const statusAtual = STATE[n].status;
+        const statusSalvo = d.status || 'Pendente';
+        const qAtual = (() => { for(const g of DATA) for(const o of g.os) if(o.n===n) return o.q; return null; })();
+        const qAnterior = d.q_orig || STATE[n].q_orig || qAtual;
+        const mudouParaEmissao = qAtual === 'Emissão' && qAnterior === 'Cotação';
+        if (mudouParaEmissao) {
+          // Mudou de Cotação → Emissão: reseta status para Pendente (nova etapa)
+          STATE[n].status = 'Pendente';
+          STATE[n].q_orig = qAtual;
+          // Salvar o novo q_orig no Firestore para não resetar de novo
+          db.collection('os_status').doc(String(n)).set({ q_orig: qAtual }, { merge: true }).catch(()=>{});
+        } else {
+          // Preservar status se já foi alterado pelo usuário
+          STATE[n].status = (statusAtual === 'Pendente') ? statusSalvo : statusAtual;
+        }
+        STATE[n].resp   = d.resp   || STATE[n].resp || '';
+        STATE[n].obs    = d.obs    || STATE[n].obs  || '';
+        STATE[n].cons_override = d.cons_override || STATE[n].cons_override || '';
+        STATE[n].q_orig = d.q_orig || STATE[n].q_orig || qAtual;
         mudou = true;
       }
     });
