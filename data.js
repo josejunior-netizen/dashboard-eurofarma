@@ -1,5 +1,5 @@
-// Gerado automaticamente em 29/04/2026 19:15
-const DATA_TIMESTAMP = "29/04/2026 19:15";
+// Gerado automaticamente em 29/04/2026 20:15
+const DATA_TIMESTAMP = "29/04/2026 20:15";
 const DATA = [
   {h:"Mirante do Lago Hotel",c:"PIMENTA / MG",tipo:"historico",tr:145,dono:"Flavia Ribeiro",mc:false,nrh:1,nem:1,ht:[145],ht_sgl:[145],ht_dbl:[],tr_sgl:145,tr_dbl:null,src:null,os:[{n:35319,q:"Emissão",cons:"Marcia Abreu",t:120,d:"04/05",hosp:"LARISSA SILVA",apto:"Individual",obs_orig:""},{n:35320,q:"Emissão",cons:"Marcia Abreu",t:120,d:"04/05",hosp:"ALEXANDRE BELTRAO",apto:"Individual",obs_orig:""},{n:35525,q:"Emissão",cons:"Marcia Abreu",t:120,d:"04/05",hosp:"PEDRO ARAUJO",apto:"Individual",obs_orig:"Hospedagem no Balcão R$ 120,00"}]},
   {h:"Sem nome",c:"Venda Nova do Imigrante",tipo:"sem_ref",tr:null,dono:"",mc:true,nrh:0,nem:0,ht:[],ht_sgl:[],ht_dbl:[],tr_sgl:null,tr_dbl:null,src:null,os:[{n:35976,q:"Emissão",cons:"Katia Laporta",t:null,d:"04/05",hosp:"DELANO LEMOS",apto:"Individual",obs_orig:"Valor da Tarifa no balcão 190,00. Menor que a taxa da agência."},{n:35979,q:"Cotação",cons:"Flavia Ribeiro",t:null,d:"06/05",hosp:"DELANO LEMOS",apto:"Individual",obs_orig:"Tarifa no balcão no valor de 190,00 reais, menor que da agência."},{n:35983,q:"Cotação",cons:"Flavia Ribeiro",t:null,d:"20/05",hosp:"JOAO SOUZA JUNIOR",apto:"Individual",obs_orig:"Preço no balcão 210 reais"}]},
