@@ -1,5 +1,5 @@
-// Gerado automaticamente em 29/04/2026 16:00
-const DATA_TIMESTAMP = "29/04/2026 16:00";
+// Gerado automaticamente em 29/04/2026 16:48
+const DATA_TIMESTAMP = "29/04/2026 16:48";
 const DATA = [
   {h:"Bristol hotel",c:"VIÇOSA / MG",tipo:"sem_ref",tr:null,dono:"",mc:true,nrh:0,nem:0,ht:[],ht_sgl:[],ht_dbl:[],tr_sgl:null,tr_dbl:null,src:null,os:[{n:35301,q:"Cotação",cons:"Katia Laporta",t:null,d:"14/05",hosp:"VICTOR COELI",apto:"Individual",obs_orig:"Taxa balcão 159,00"},{n:35683,q:"Cotação",cons:"Stephanie Bruno",t:null,d:"20/05",hosp:"ELDER RIBEIRO",apto:"Individual",obs_orig:"Melhor preço"},{n:35842,q:"Cotação",cons:"YUMARA CRUZ",t:null,d:"25/05",hosp:"ELDER RIBEIRO",apto:"Individual",obs_orig:"Tarifa 159,00 no balcão"}]},
   {h:"Hotel Aliança",c:"RIO DO SUL / SC",tipo:"acordo",tr:288.0,dono:"Diego Nascimento",mc:false,nrh:53,nem:10,ht:[288, 289, 376],ht_sgl:[288, 289, 376],ht_dbl:[],tr_sgl:290,tr_dbl:null,src:{ti:288.0,td:414.0,tt:"Tarifa Fixa",cond:"LRA",bk:"na",em:"na",cafe:"Sim"},os:[{n:35443,q:"Emissão",cons:"Marcia Abreu",t:288,d:"13/05",hosp:"JEAN ZIMERMANN",apto:"Individual",obs_orig:"Tarifa negociada em 282,00 diária."},{n:35444,q:"Emissão",cons:"Marcia Abreu",t:288,d:"25/05",hosp:"JEAN ZIMERMANN",apto:"Individual",obs_orig:"Tarifa negociada em 282,00 diária."},{n:35446,q:"Emissão",cons:"Marcia Abreu",t:288,d:"10/06",hosp:"JEAN ZIMERMANN",apto:"Individual",obs_orig:"Tarifa negociada em 282,00 diária."}]},
