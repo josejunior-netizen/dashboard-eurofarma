@@ -1,5 +1,5 @@
-// Gerado automaticamente em 29/04/2026 11:27
-const DATA_TIMESTAMP = "29/04/2026 11:27";
+// Gerado automaticamente em 29/04/2026 13:19
+const DATA_TIMESTAMP = "29/04/2026 13:19";
 const DATA = [
   {h:"BEACH CLASS CONVENTION BY HOM",c:"Recife",tipo:"historico",tr:362,dono:"Isabela Torres",mc:false,nrh:59,nem:5,ht:[340, 355, 369, 373, 426],ht_sgl:[340, 355, 426],ht_dbl:[369, 373],tr_sgl:345,tr_dbl:369,src:null,os:[{n:30700,q:"Emissão",cons:"Tatiana Silva",t:369,d:"06/04",hosp:"YURI MARTINS",apto:"Duplo",obs_orig:"REUNIÃO DE CICLO 3"},{n:30712,q:"Emissão",cons:"Tatiana Silva",t:369,d:"06/04",hosp:"APYARA RODRIGUES",apto:"Duplo",obs_orig:"REUNIÃO DE CICLO 3"},{n:30716,q:"Emissão",cons:"Tatiana Silva",t:369,d:"06/04",hosp:"JORGE SILVA",apto:"Duplo",obs_orig:"REUNIÃO DE CICLO 3"}]},
   {h:"Bristol hotel",c:"VIÇOSA / MG",tipo:"sem_ref",tr:null,dono:"",mc:true,nrh:0,nem:0,ht:[],ht_sgl:[],ht_dbl:[],tr_sgl:null,tr_dbl:null,src:null,os:[{n:35301,q:"Cotação",cons:"Katia Laporta",t:null,d:"14/05",hosp:"VICTOR COELI",apto:"Individual",obs_orig:"Taxa balcão 159,00"},{n:35683,q:"Cotação",cons:"Stephanie Bruno",t:null,d:"20/05",hosp:"ELDER RIBEIRO",apto:"Individual",obs_orig:"Melhor preço"},{n:35842,q:"Cotação",cons:"YUMARA CRUZ",t:null,d:"25/05",hosp:"ELDER RIBEIRO",apto:"Individual",obs_orig:"Tarifa 159,00 no balcão"}]},
