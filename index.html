@@ -2090,8 +2090,21 @@ function parseArgoEmail(assunto, corpoHtml) {
     } else if (/^[^-]+\s*-\s*[^-]+\s*-/.test(desc)) {
       // Formato cotação: "Cidade - Nome Hotel - (Fone...)"
       const p = desc.split(/\s*-\s*/);
-      r.cidade = p[0].trim();
+      // Pode vir "Cidade/UF/ Hotel" — limpar UF do nome da cidade
+      const cidadeBruta = p[0].trim();
+      const cidadePartes = cidadeBruta.split('/').map(s => s.trim()).filter(Boolean);
+      r.cidade = cidadePartes[0]; // só o nome da cidade, sem UF extra
       r.hotel  = p[1].trim().toUpperCase();
+      // Se hotel vier junto com cidade (ex: "Santa Inês/MA/ Hotel Tupinambá")
+      // detectar pelo padrão: cidade/UF/Hotel
+      if (cidadePartes.length >= 3) {
+        // "Santa Inês / MA / Hotel Tupinambá"
+        r.cidade = cidadePartes[0];
+        r.hotel  = cidadePartes.slice(2).join(' ').trim().toUpperCase();
+      } else if (cidadePartes.length === 2 && !/^[A-Z]{2}$/.test(cidadePartes[1])) {
+        // Segunda parte não é UF — é parte do hotel
+        r.hotel = cidadePartes[1].trim().toUpperCase();
+      }
     } else if (desc.includes('(Fone') || /\/[A-Z]{2}\s*\(/.test(desc)) {
       // Formato alternativo: "NOME HOTEL ENDEREÇO Cidade/UF (Fone...)" sem separador
       r.cidade = extrairCidadeDesc(desc);
