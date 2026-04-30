@@ -2264,7 +2264,12 @@ function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
       };
     }
   }
-  return melhorScore >= 5 ? melhor : null;
+  // Score mínimo varia: nomes genéricos exigem score mais alto
+  const palavrasSignificativas = palavrasH.filter(p => !PALAVRAS_GENERICAS.has(p));
+  const scoreMinimo = palavrasSignificativas.length === 0 ? 12 // só palavras genéricas: exige match exato + cidade
+                    : palavrasSignificativas.length === 1 ? 8  // 1 palavra significativa: cidade obrigatória + nome
+                    : 5;                                        // 2+ palavras: score normal
+  return melhorScore >= scoreMinimo ? melhor : null;
 }
 
 // Converte OS de email para formato idêntico ao da planilha
