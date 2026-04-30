@@ -1026,11 +1026,65 @@ function renderGroups() {
 
   const list = document.getElementById('hotelList');
   const empty = document.getElementById('emptyState');
-  if(!page.length){ list.innerHTML=''; empty.style.display='block'; return; }
+
+  // ── OS DE EMAIL (em tempo real, sem duplicata com planilha) ───────────────
+  const gruposEmail = typeof getGruposEmail === 'function' ? getGruposEmail() : [];
+  const emailBanner = gruposEmail.length > 0 ? `
+    <div style="margin-bottom:8px">
+      <div style="background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:var(--rl);overflow:hidden;box-shadow:var(--shadow)">
+        <div style="background:#2254E8;padding:8px 16px;display:flex;align-items:center;gap:8px">
+          <span style="font-size:13px;font-weight:700;color:#fff">📧 ${gruposEmail.reduce((s,g)=>s+g.os.length,0)} OS recebidas por email — aguardando atualização da planilha</span>
+        </div>
+        ${gruposEmail.map(g => {
+          const osRows = g.os.map(os => {
+            const st = STATE[os.n] || { status:'Pendente', obs:'', cons_override:'' };
+            const sMap={'Pendente':'s-pend','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
+            const consNome = st.cons_override || normCons(os.cons) || '—';
+            return `<tr>
+              <td><span class="os-num">#${os.n}</span></td>
+              <td>
+                <div style="font-size:12px;font-weight:500;color:#374151">${consNome}</div>
+                ${os.hosp ? `<span style="font-size:11px;color:var(--ink4)">${os.hosp}</span>` : ''}
+              </td>
+              <td><span class="tag ${os.q==='Emissão'?'tag-emi':'tag-cot'}">${os.q}</span></td>
+              <td style="font-size:12px;color:var(--ink3)">${os.apto||'Individual'}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:13px">${os.t?'R$ '+os.t:'—'}</td>
+              <td style="font-family:'DM Mono',monospace;font-size:12px">${os.d||'—'}${os.d_out?' → '+os.d_out:''}</td>
+              <td><select class="sst ${sMap[st.status]||'s-pend'}" onchange="setStatus(${os.n},this)">
+                <option ${st.status==='Pendente'?'selected':''}>Pendente</option>
+                <option ${st.status==='Cotação hotel'?'selected':''}>Cotação hotel</option>
+                <option ${st.status==='Ag. confirmação'?'selected':''}>Ag. confirmação</option>
+              </select></td>
+              <td style="min-width:150px"><input class="il" placeholder="Observação…" value="${st.obs||''}" onchange="setObs(${os.n},this.value)"></td>
+            </tr>`;
+          }).join('');
+          return `<div style="border-top:1px solid #BFDBFE;padding:0">
+            <div style="padding:8px 16px;background:#F0F7FF;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-weight:700;color:var(--ink);font-size:13px">${g.h}</span>
+              <span style="font-size:11px;color:var(--ink4)">${g.c}</span>
+              <span style="font-size:10px;background:#DBEAFE;color:#1E40AF;padding:2px 8px;border-radius:20px;font-weight:700">📧 Email</span>
+            </div>
+            <div style="overflow-x:auto">
+              <table class="os-table" style="width:100%">
+                <thead><tr style="background:#EFF6FF">
+                  <th style="width:80px">Nº OS</th><th>Consultor / Hóspede</th>
+                  <th style="width:85px">Tipo OS</th><th style="width:68px">Apto</th>
+                  <th style="width:75px">Tarifa</th><th style="width:100px">Período</th>
+                  <th style="width:135px;text-align:center">Status</th><th>Observação</th>
+                </tr></thead>
+                <tbody>${osRows}</tbody>
+              </table>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>` : '';
+
+  if(!page.length && gruposEmail.length === 0){ list.innerHTML=''; empty.style.display='block'; return; }
   empty.style.display='none';
   const allCons = getAllConsultores();
 
-  list.innerHTML = page.map(g => {
+  list.innerHTML = emailBanner + page.map(g => {
     const idx = DATA.indexOf(g);
     const isOpen = OPEN.has(idx);
     const prog = groupProg(g);
@@ -1708,6 +1762,170 @@ async function renderHistorico() {
   }
 }
 
+
+// ── PARSER DE EMAILS DO ARGO ─────────────────────────────────────────────────
+function parseArgoEmail(assunto, corpoHtml) {
+  const corpo = corpoHtml
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&amp;/g, '&')
+    .replace(/ +/g, ' ')
+    .trim();
+
+  const r = {};
+
+  // Número da OS
+  let mOs = assunto.match(/Solicita\u00e7\u00e3o\s+#?(\d+)/i);
+  if (!mOs) mOs = corpo.match(/Solicita\u00e7\u00e3o\s+n\u00famero\s+(\d+)/i);
+  r.n = mOs ? parseInt(mOs[1]) : null;
+
+  // Status
+  r.q = /cota\u00e7/i.test(assunto) ? 'Cota\u00e7\u00e3o' : 'Emiss\u00e3o';
+
+  // Hóspede
+  let mH = corpo.match(/solicita\u00e7\u00e3o para ([A-Z\u00c0-\u00da ]+?)\./i);
+  if (!mH) mH = corpo.match(/n\u00famero \d+ para ([A-Z\u00c0-\u00da ]+?) foi/i);
+  r.hosp = mH ? mH[1].trim() : '';
+
+  // Consultor
+  const mC = corpo.match(/Nome do Atendente[:\s]+([^\n\r]+)/i);
+  r.cons = mC ? mC[1].trim().split(/\s{2,}|Centro de Custo|Destinat\u00e1rios|Data:/)[0].trim() : '';
+
+  // Bloco HOSPEDAGEM
+  const mB = corpo.match(/>>>\s*HOSPEDAGEM([\s\S]*?)>>>\s*SOLICITANTE/i);
+  const b = mB ? mB[1] : corpo;
+
+  // Hotel + Cidade
+  const mDesc = b.match(/Descri\u00e7\u00e3o\.\s*:\s*([^\n\r]+)/i);
+  if (mDesc) {
+    const desc = mDesc[1].trim();
+    if (desc.includes('()')) {
+      // Emissão: "NOME HOTEL () ENDEREÇO Cidade/UF (Fone...)"
+      r.hotel = desc.split('()')[0].trim().toUpperCase();
+      const mCid = desc.match(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s]+\/[A-Z]{2})\s*\(/);
+      r.cidade = mCid ? mCid[1].trim() : '';
+    } else if (/^[^-]+\s*-\s*[^-]+\s*-/.test(desc)) {
+      // Cotação: "Cidade - Nome Hotel - (Fone...)"
+      const p = desc.split(/\s*-\s*/);
+      r.cidade = p[0].trim();
+      r.hotel  = p[1].trim().toUpperCase();
+    } else {
+      r.hotel  = desc.replace(/\(Fone.+$/i,'').replace(/\(\)/g,'').trim().toUpperCase();
+      r.cidade = '';
+    }
+    // Limpar cidade — pegar só "Palavra/UF" removendo bairro/rua antes
+    if (r.cidade && r.cidade.includes('/')) {
+      const mCidLimpa = r.cidade.match(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s-]+\/[A-Z]{2})$/);
+      if (mCidLimpa) r.cidade = mCidLimpa[1].trim();
+    }
+  }
+
+  // Apartamento
+  const mA = b.match(/Apartamento[:\s]+([^\.\n\r,]+)/i);
+  r.apto = mA ? mA[1].trim() : 'Individual';
+
+  // Período
+  const mP = b.match(/Per\u00edodo[.\s]+:\s*(\d{1,2}\/\w{3})\s+[\d:]+\s+a\s+(\d{1,2}\/\w{3})/i);
+  if (mP) {
+    const M = {Jan:'01',Fev:'02',Mar:'03',Abr:'04',Mai:'05',Jun:'06',
+               Jul:'07',Ago:'08',Set:'09',Out:'10',Nov:'11',Dez:'12'};
+    const f = s => { const [d,m] = s.split('/'); return `${d.padStart(2,'0')}/${M[m]||'??'}`; };
+    r.d     = f(mP[1]);
+    r.d_out = f(mP[2]);
+  }
+
+  // Tarifa
+  const mV = b.match(/Di\u00e1ria[:\s]+BRL\s+([\d.,]+)/i);
+  r.t = mV ? Math.round(parseFloat(mV[1].replace(',','.'))) : null;
+
+  // Forma de pagamento
+  const mPg = b.match(/Pagamento\.\s*:\s*([^\n\r]+)/i);
+  r.fp = mPg ? mPg[1].split(/\s*Observa\u00e7\u00e3o/i)[0].trim() : '';
+
+  // Observação
+  const mOb = b.match(/Observa\u00e7\u00e3o[:\s]+([^\n\r]{5,})/i);
+  r.obs = mOb ? mOb[1].trim().substring(0, 150) : '';
+
+  r.origem = 'email';
+  return r;
+}
+
+// ── LISTENER OS_EMAIL (tempo real) ────────────────────────────────────────────
+const OS_EMAIL_STATE = {}; // osNum -> dados parseados do email
+
+function iniciarListenerOsEmail() {
+  db.collection('os_email')
+    .where('processado', '==', false)
+    .onSnapshot(snapshot => {
+      if (typeof STATE === 'undefined') return;
+      let mudou = false;
+      snapshot.forEach(doc => {
+        const d = doc.data();
+        if (!d.assunto || !d.corpo) return;
+        const os = parseArgoEmail(d.assunto, d.corpo);
+        if (!os.n || !os.hotel) return;
+
+        // ── ANTI-DUPLICATA: verificar se OS já está na planilha ───────────────
+        const osNaplanilha = DATA.some(g => g.os.some(o => o.n === os.n));
+
+        if (osNaplanilha) {
+          // OS já existe na planilha — atualizar q (Cotação→Emissão) se mudou
+          for (const g of DATA) {
+            const oItem = g.os.find(o => o.n === os.n);
+            if (oItem) {
+              const qAnterior = STATE[os.n]?.q_orig || oItem.q;
+              if (os.q === 'Emissão' && qAnterior === 'Cotação') {
+                // Mudou de etapa via email — resetar status para Pendente
+                if (STATE[os.n]) {
+                  STATE[os.n].status = 'Pendente';
+                  STATE[os.n].q_orig = 'Emissão';
+                  db.collection('os_status').doc(String(os.n))
+                    .set({ status: 'Pendente', q_orig: 'Emissão' }, { merge: true })
+                    .catch(() => {});
+                }
+              }
+              break;
+            }
+          }
+          // Marcar email como processado no Firestore (já tem na planilha)
+          db.collection('os_email').doc(doc.id)
+            .update({ processado: true })
+            .catch(() => {});
+        } else {
+          // OS não está na planilha — exibir em tempo real
+          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id };
+          if (STATE[os.n] === undefined) {
+            STATE[os.n] = {
+              status: 'Pendente', resp: '', obs: '',
+              cons_override: '', q_orig: os.q
+            };
+          }
+          mudou = true;
+        }
+      });
+      if (mudou) {
+        atualizarKPIs();
+        renderGroups();
+      }
+    }, err => console.error('Listener os_email:', err));
+}
+
+// Retorna OS do email que não estão na planilha, agrupadas por hotel+cidade
+function getGruposEmail() {
+  const grupos = {};
+  Object.values(OS_EMAIL_STATE).forEach(os => {
+    const osNaplanilha = DATA.some(g => g.os.some(o => o.n === os.n));
+    if (osNaplanilha) return; // já está na planilha, não exibir
+    const key = (os.hotel || 'SEM HOTEL') + '||' + (os.cidade || '');
+    if (!grupos[key]) grupos[key] = { h: os.hotel, c: os.cidade, os: [] };
+    grupos[key].os.push(os);
+  });
+  return Object.values(grupos);
+}
+
 // Garantir que DATA foi carregado antes de iniciar
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
@@ -1828,6 +2046,8 @@ function mostrarDashboard() {
   const btnSenha = document.getElementById('btnAlterarSenha');
   if(btnSenha) btnSenha.style.display = 'flex';
   iniciarListenersFirestore();
+  iniciarListenerDupTratadas();
+  iniciarListenerOsEmail();
 }
 
 // ── FIRESTORE: listener em tempo real para os_status ─────────────────────────
