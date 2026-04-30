@@ -150,12 +150,30 @@ def buscar_sourcing(hotel_name, cidade_str, sourcing):
                 matchesk = sum(1 for p in pk if p in hn)
                 score += (matches + matchesk) * 2
 
-        # Cidade obrigatória quando disponível
-        cidade_bate = cn and kc and (kc == cn or kc in cn or cn in kc)
+        # Cidade obrigatória com validação robusta
+        def cidade_compativel(email_c, plan_c):
+            if not email_c: return True
+            import unicodedata
+            def norm_c(s):
+                s = unicodedata.normalize('NFD', s.upper())
+                s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+                return ' '.join(s.replace('/', ' ').split())
+            eN = norm_c(email_c)
+            pN = norm_c(plan_c)
+            if eN == pN: return True
+            PREP = {'DO','DA','DE','DI','DOS','DAS','E','O','A'}
+            palE = [p for p in eN.split() if len(p) > 1 and p not in PREP]
+            palP = [p for p in pN.split() if len(p) > 1 and p not in PREP]
+            if abs(len(palE) - len(palP)) > 1: return False
+            menor = palE if len(palE) <= len(palP) else palP
+            maior = palP if len(palE) <= len(palP) else palE
+            return all(any(m == p or m in p or p in m for m in maior) for p in menor)
+
+        cidade_bate = cidade_compativel(cn, kc)
         if cn and not cidade_bate:
             if score < 10:
                 continue
-        elif cidade_bate:
+        elif cidade_bate and cn:
             score += 5
 
         # Score mínimo dinâmico
