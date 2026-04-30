@@ -2232,7 +2232,8 @@ function iniciarListenerOsEmail() {
 // Retorna grupos extras (não existem na planilha)
 // Normaliza string para comparação de nomes de hotel
 function normHotel(s) {
-  return (s||'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
+  return (s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
 }
 
 // Busca grupo existente na planilha pelo nome do hotel (melhor match)
@@ -2244,15 +2245,22 @@ const PALAVRAS_GENERICAS = new Set(['HOTEL','PALACE','POUSADA','APART','SUITE','
 // ── PALAVRAS GENÉRICAS (global) ──────────────────────────────────────────────
 // calcScore: calcula compatibilidade entre hotel do email e hotel da base
 // Parâmetros: hEmail/cEmail = hotel/cidade do email; gH/gC = hotel/cidade da base
+//
+// REGRA CRÍTICA: cidade sozinha NUNCA casa. É preciso ter match de NOME do hotel.
+// Cidade é apenas um requisito eliminatório (se não bate, score=0).
+// Bug corrigido: antes retornava score=5 só pela cidade, mesclando OS de email
+// no primeiro grupo da mesma cidade (ex: K-Platz Hotel mesclado em Hotelema Palace).
 function calcScore(hEmail, cEmail, gH, gC) {
   const hN = normHotel(hEmail);
   const cN = normHotel((cEmail||'').split('/')[0]);
   const palavrasH = hN.split(' ').filter(p => p.length > 3);
 
   // Cidade: validação robusta com normalização de acentos e limite de palavras
+  // Match por prefixo (não substring arbitrário) — evita falso positivo
+  // "PALMAS" vs "ALMAS" (substring) ≠ "RIBEIRAO" vs "RIBEIRAOZINHO" (prefixo).
   function cidadeOK(eC, pC) {
     if (!eC) return true;
-    const sem = s => s.normalize('NFD').replace(/[̀-ͯ]/g,'')
+    const sem = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'')
       .toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
     const eN = sem(eC), pN = sem(pC);
     if (eN === pN) return true;
@@ -2260,36 +2268,60 @@ function calcScore(hEmail, cEmail, gH, gC) {
     const pE = eN.split(' ').filter(p => p.length > 1 && !PREP.has(p));
     const pP = pN.split(' ').filter(p => p.length > 1 && !PREP.has(p));
     if (Math.abs(pE.length - pP.length) > 1) return false;
+    // Match por prefixo: uma palavra começa com a outra (mín 4 chars)
+    // Evita "PALMAS" casar com "ALMAS" só porque ALMAS está dentro de PALMAS
+    const palavraCasa = (a, b) => {
+      if (a === b) return true;
+      if (a.length < 4 || b.length < 4) return false;
+      const min = Math.min(a.length, b.length);
+      // exige no mínimo 4 chars iguais começando do início
+      return a.substring(0, min) === b.substring(0, min);
+    };
     const menor = pE.length <= pP.length ? pE : pP;
     const maior = pE.length <= pP.length ? pP : pE;
-    return menor.every(p => maior.some(m => m === p || m.includes(p) || p.includes(m)));
+    return menor.every(p => maior.some(m => palavraCasa(m, p)));
   }
 
-  let score = 0;
+  // 1) Cidade é REQUISITO. Se não bate, descarta.
   const cidadeBate = cidadeOK(cN, gC);
-  if (cN && !cidadeBate) return 0; // cidade não bate — descarta
-  if (cidadeBate && cN) score += 5;
+  if (cN && !cidadeBate) return 0;
 
-  // Match de nome
-  if (gH === hN) score += 10;
-  else if (gH.includes(hN) || hN.includes(gH)) score += 4;
-  else {
+  // 2) NOME do hotel é OBRIGATÓRIO. Sem match de nome, score = 0.
+  let scoreNome = 0;
+  if (gH === hN) {
+    scoreNome = 10;
+  } else if (gH.includes(hN) || hN.includes(gH)) {
+    scoreNome = 4;
+  } else {
     const pG = gH.split(' ').filter(p => p.length > 3 && !PALAVRAS_GENERICAS.has(p));
     const pHs = palavrasH.filter(p => !PALAVRAS_GENERICAS.has(p));
     if (pHs.length > 0 && pG.length > 0) {
-      score += (pHs.filter(p => gH.includes(p)).length + pG.filter(p => hN.includes(p)).length) * 2;
+      scoreNome = (pHs.filter(p => gH.includes(p)).length + pG.filter(p => hN.includes(p)).length) * 2;
     }
   }
+
+  // Sem nenhum match de nome → não é o mesmo hotel, mesmo na mesma cidade
+  if (scoreNome === 0) return 0;
+
+  // 3) Bônus de cidade só faz sentido se já houve match de nome
+  let score = scoreNome;
+  if (cidadeBate && cN) score += 5;
   return score;
 }
 
-function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
+// Threshold dinâmico para considerar match válido entre hotel do email e da base.
+// Hotéis com nomes muito genéricos exigem score maior para evitar falsos positivos.
+// Centraliza a lógica antes duplicada em buscarGrupoReferencia, mesclarEmailNosGrupos e getGruposEmail.
+function scoreMinimoHotel(hotelEmail) {
   const hN = normHotel(hotelEmail);
-  const palavrasH = hN.split(' ').filter(p => p.length > 3);
-  const palavrasSignificativas = palavrasH.filter(p => !PALAVRAS_GENERICAS.has(p));
-  const scoreMinimo = palavrasSignificativas.length === 0 ? 12
-                    : palavrasSignificativas.length === 1 ? 8
-                    : 5;
+  const palavrasSig = hN.split(' ').filter(p => p.length > 3 && !PALAVRAS_GENERICAS.has(p));
+  if (palavrasSig.length === 0) return 12;
+  if (palavrasSig.length === 1) return 8;
+  return 5;
+}
+
+function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
+  const scoreMinimo = scoreMinimoHotel(hotelEmail);
 
   let melhor = null, melhorScore = 0;
 
@@ -2341,7 +2373,8 @@ function getGruposEmail() {
   const osMescladas = new Set();
   Object.values(OS_EMAIL_STATE).forEach(os => {
     if (DATA.some(g => g.os.some(o => o.n === os.n))) { osMescladas.add(os.n); return; }
-    // Verificar se vai ser mesclado em algum grupo da planilha
+    // Mesma regra do mesclarEmailNosGrupos: threshold dinâmico baseado no nome
+    const scoreMin = scoreMinimoHotel(os.hotel||'');
     const vaiBeMesclado = DATA.some(g => {
       const score = calcScore(
         normHotel(os.hotel||''),
@@ -2349,7 +2382,7 @@ function getGruposEmail() {
         normHotel(g.h),
         normHotel((g.c||'').split('/')[0])
       );
-      return score >= 5;
+      return score >= scoreMin;
     });
     if (vaiBeMesclado) osMescladas.add(os.n);
   });
@@ -2423,14 +2456,16 @@ function mesclarEmailNosGrupos(grupos) {
     const osExtras = Object.values(OS_EMAIL_STATE).filter(os => {
       if (jaMescladas.has(os.n)) return false;
       if (DATA.some(d => d.os.some(o => o.n === os.n))) return false;
-      // Usar calcScore para detectar mesmo hotel mesmo com endereço no nome
+      // Threshold dinâmico — mesma regra do buscarGrupoReferencia,
+      // evita mesclar hotéis diferentes só pela cidade em comum
+      const scoreMin = scoreMinimoHotel(os.hotel||'');
       const score = calcScore(
         normHotel(os.hotel||''),
         normHotel((os.cidade||'').split('/')[0]),
         normHotel(g.h),
         normHotel((g.c||'').split('/')[0])
       );
-      return score >= 5;
+      return score >= scoreMin;
     });
     if (!osExtras.length) return g;
     osExtras.forEach(os => jaMescladas.add(os.n));
