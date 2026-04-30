@@ -1930,6 +1930,48 @@ async function renderHistorico() {
 }
 
 
+// ── REPROCESSAR EMAILS JÁ GRAVADOS NO FIRESTORE ─────────────────────────────
+// Corrige documentos antigos com parser errado (cidade errada, etc.)
+async function reprocessarOsEmail() {
+  if (typeof STATE === 'undefined') return;
+  try {
+    const snap = await db.collection('os_email')
+      .where('processado', '==', false)
+      .get();
+    if (snap.empty) return;
+
+    let reprocessados = 0;
+    snap.forEach(doc => {
+      const d = doc.data();
+      if (!d.assunto || !d.corpo) return;
+      // Reparsar com o parser atualizado
+      const os = parseArgoEmail(d.assunto, d.corpo);
+      if (!os.n) return;
+
+      // Atualizar o documento com os dados corrigidos
+      db.collection('os_email').doc(doc.id).update({
+        hotel_parsed: os.hotel || '',
+        cidade_parsed: os.cidade || '',
+        cons_parsed: os.cons || '',
+        q_parsed: os.q || '',
+        reprocessado: true
+      }).catch(() => {});
+
+      // Atualizar cache local
+      if (OS_EMAIL_STATE[os.n]) {
+        OS_EMAIL_STATE[os.n] = { ...OS_EMAIL_STATE[os.n], ...os, firestoreId: doc.id };
+      }
+      reprocessados++;
+    });
+    if (reprocessados > 0) {
+      console.log(`Reprocessados ${reprocessados} emails do ARGO`);
+      renderGroups();
+    }
+  } catch(e) {
+    console.error('Erro reprocessar os_email:', e);
+  }
+}
+
 // ── PARSER DE EMAILS DO ARGO ─────────────────────────────────────────────────
 function parseArgoEmail(assunto, corpoHtml) {
   const corpo = corpoHtml
@@ -2001,42 +2043,51 @@ function parseArgoEmail(assunto, corpoHtml) {
   const mDesc = b.match(/Descri\u00e7\u00e3o\.\s*:\s*([^\n\r]+)/i);
   if (mDesc) {
     const desc = mDesc[1].trim();
-    if (desc.includes('()')) {
-      // Emissão: "NOME HOTEL () ENDEREÇO Cidade/UF (Fone...)"
-      r.hotel = desc.split('()')[0].trim().toUpperCase();
-      // Extrair cidade: pegar última ocorrência de Palavra/UF antes do (Fone
-      // e remover bairros/logradouros em MAIÚSCULAS do início
-      const todosMatches = [...desc.matchAll(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s-]*?\/[A-Z]{2})(?:\s*\(|$)/g)];
-      if (todosMatches.length > 0) {
-        const ultima = todosMatches[todosMatches.length - 1][1].trim();
-        const partes = ultima.split('/');
-        const uf = partes[1];
-        const palavras = partes[0].trim().split(/\s+/);
-        let inicio = 0;
-        for (let i = 0; i < palavras.length - 1; i++) {
-          if (palavras[i] === palavras[i].toUpperCase() && palavras[i].length > 2 &&
-              !/^(DA|DO|DE|DI|DOS|DAS)$/.test(palavras[i])) {
-            inicio = i + 1;
-          }
+
+    // Normalizar: remover tipo de apto entre parênteses para detectar formato correto
+    const TIPOS_APTO_RE = /\((Individual|Duplo|Double|Single|Casal|Solteiro|Superior|Standard|Deluxe|Suite|Simples|Executivo|Luxo|Master)\)/gi;
+    const descNorm = desc.replace(TIPOS_APTO_RE, '()');
+
+    // Função: extrai Cidade/UF limpando bairro/logradouro em MAIÚSCULAS do início
+    function extrairCidadeDesc(texto) {
+      const matches = [...texto.matchAll(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s-]*?\/[A-Z]{2})(?:\s*\(|\s*$)/g)];
+      if (!matches.length) return '';
+      const ultima = matches[matches.length - 1][1].trim();
+      const partes = ultima.split('/');
+      const uf = partes[1];
+      const palavras = partes[0].trim().split(/\s+/);
+      let inicio = 0;
+      for (let i = 0; i < palavras.length - 1; i++) {
+        if (palavras[i] === palavras[i].toUpperCase() && palavras[i].length > 2 &&
+            !/^(DA|DO|DE|DI|DOS|DAS|SAO|STA|STO)$/.test(palavras[i])) {
+          inicio = i + 1;
         }
-        r.cidade = palavras.slice(inicio).join(' ') + '/' + uf;
-      } else {
-        r.cidade = '';
       }
+      return palavras.slice(inicio).join(' ') + '/' + uf;
+    }
+
+    if (descNorm.includes('()')) {
+      // Formato emissão: "NOME HOTEL () ENDEREÇO Cidade/UF (Fone...)"
+      r.hotel  = descNorm.split('()')[0].trim().toUpperCase();
+      r.cidade = extrairCidadeDesc(descNorm);
     } else if (/^[^-]+\s*-\s*[^-]+\s*-/.test(desc)) {
-      // Cotação: "Cidade - Nome Hotel - (Fone...)"
+      // Formato cotação: "Cidade - Nome Hotel - (Fone...)"
       const p = desc.split(/\s*-\s*/);
       r.cidade = p[0].trim();
       r.hotel  = p[1].trim().toUpperCase();
+    } else if (desc.includes('(Fone') || /\/[A-Z]{2}\s*\(/.test(desc)) {
+      // Formato alternativo: "NOME HOTEL ENDEREÇO Cidade/UF (Fone...)" sem separador
+      r.cidade = extrairCidadeDesc(desc);
+      // Hotel: tudo antes do endereço (números, vírgulas indicam início de endereço)
+      const mEnd = desc.match(/^([^,\d(]+?)(?:\s+[A-Z0-9]{1,5}[,\s]|\s+[A-Z]{2}[\s,]|\s+\d)/);
+      r.hotel = mEnd ? mEnd[1].trim().toUpperCase() : desc.replace(/\(Fone.+$/i,'').trim().toUpperCase();
     } else {
-      r.hotel  = desc.replace(/\(Fone.+$/i,'').replace(/\(\)/g,'').trim().toUpperCase();
-      r.cidade = '';
+      r.hotel  = desc.trim().toUpperCase();
+      r.cidade = extrairCidadeDesc(desc);
     }
-    // Limpar cidade — pegar só "Palavra/UF" removendo bairro/rua antes
-    if (r.cidade && r.cidade.includes('/')) {
-      const mCidLimpa = r.cidade.match(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s-]+\/[A-Z]{2})$/);
-      if (mCidLimpa) r.cidade = mCidLimpa[1].trim();
-    }
+
+    // Limpeza final — remover endereço residual do hotel
+    r.hotel = r.hotel.replace(/\s*[,\(].*$/,'').trim();
   }
 
   // Apartamento
@@ -2256,11 +2307,38 @@ function getGruposEmail() {
     }
     grupos[key].os.push(osEmailParaFormato(os));
   });
-  // Atualizar mc (múltiplos consultores)
+
+  // Recalcular tipo considerando divergência de tarifa das OS de email
+  const DIV_THRESH = 0.12;
   Object.values(grupos).forEach(g => {
+    // mc (múltiplos consultores)
     const cons = new Set(g.os.map(o => o.cons));
     g.mc = cons.size > 1;
+
+    // Verificar divergência: se tem acordo e alguma OS tem tarifa muito diferente
+    if (g.src && (g.tipo === 'acordo' || g.tipo === 'historico')) {
+      let temDiv = false;
+      g.os.forEach(o => {
+        if (!o.t) return;
+        const apto = o.apto || 'Individual';
+        const ref = (apto === 'Duplo' && g.src.td)
+          ? parseFloat(g.src.td)
+          : g.src.ti ? parseFloat(g.src.ti) : g.tr;
+        if (ref && Math.abs(o.t - ref) > ref * DIV_THRESH) temDiv = true;
+      });
+      if (temDiv) g.tipo = 'div';
+    } else if (!g.src && g.tipo === 'historico' && g.tr) {
+      // Histórico sem acordo — verificar divergência vs média histórica
+      let temDiv = false;
+      g.os.forEach(o => {
+        if (!o.t) return;
+        const ref = o.apto === 'Duplo' ? (g.tr_dbl || g.tr) : (g.tr_sgl || g.tr);
+        if (ref && Math.abs(o.t - ref) > ref * DIV_THRESH) temDiv = true;
+      });
+      if (temDiv) g.tipo = 'div';
+    }
   });
+
   return Object.values(grupos);
 }
 
@@ -2411,6 +2489,7 @@ function mostrarDashboard() {
   iniciarListenersFirestore();
   iniciarListenerDupTratadas();
   iniciarListenerOsEmail();
+  setTimeout(reprocessarOsEmail, 3000); // reprocessar emails antigos com parser atualizado
 }
 
 // ── FIRESTORE: listener em tempo real para os_status ─────────────────────────
