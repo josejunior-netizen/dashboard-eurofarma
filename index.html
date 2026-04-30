@@ -1519,13 +1519,28 @@ function atualizarKPIs() {
   set('fc-sem',    n_sem);
   set('fc-div',    n_div);
   // Atualizar subtítulo do topbar
+  // Calcular timestamp do último email recebido
+  let ultimoEmailTs = '';
+  if (typeof OS_EMAIL_STATE !== 'undefined' && Object.keys(OS_EMAIL_STATE).length > 0) {
+    const timestamps = Object.values(OS_EMAIL_STATE)
+      .map(os => os.recebido || '')
+      .filter(Boolean)
+      .map(t => new Date(t))
+      .filter(d => !isNaN(d));
+    if (timestamps.length > 0) {
+      const ultimo = new Date(Math.max(...timestamps));
+      const pad = n => String(n).padStart(2,'0');
+      ultimoEmailTs = ` · 📧 ${pad(ultimo.getDate())}/${pad(ultimo.getMonth()+1)} ${pad(ultimo.getHours())}:${pad(ultimo.getMinutes())}`;
+    }
+  }
+
   const tbSub = document.getElementById('tbSub');
   if(tbSub && typeof DATA_TIMESTAMP !== 'undefined')
-    tbSub.textContent = 'Eurofarma · Copastur · ' + DATA.length + ' grupos · ' + totalOS + ' OS · ' + DATA_TIMESTAMP;
+    tbSub.textContent = 'Eurofarma · Copastur · ' + DATA.length + ' grupos · ' + totalOS + ' OS · ' + DATA_TIMESTAMP + ultimoEmailTs;
   const ts = document.getElementById('badgeTs');
-  if(ts && typeof DATA_TIMESTAMP !== 'undefined') ts.textContent = DATA_TIMESTAMP;
+  if(ts && typeof DATA_TIMESTAMP !== 'undefined') ts.textContent = DATA_TIMESTAMP + ultimoEmailTs;
   const sumTs = document.getElementById('sumTs');
-  if(sumTs && typeof DATA_TIMESTAMP !== 'undefined') sumTs.textContent = DATA_TIMESTAMP;
+  if(sumTs && typeof DATA_TIMESTAMP !== 'undefined') sumTs.textContent = DATA_TIMESTAMP + ultimoEmailTs;
 }
 
 window.switchTab = function(tab) {
@@ -2196,7 +2211,7 @@ function iniciarListenerOsEmail() {
             .catch(() => {});
         } else {
           // OS não está na planilha — exibir em tempo real
-          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id };
+          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id, recebido: d.recebido || '' };
           if (STATE[os.n] === undefined) {
             STATE[os.n] = {
               status: 'Pendente', resp: '', obs: '',
