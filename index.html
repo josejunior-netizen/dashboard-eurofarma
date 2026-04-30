@@ -1092,8 +1092,11 @@ function renderGroups() {
     ? mesclarEmailNosGrupos(DATA)
     : DATA;
 
-  // Marcar _idx em cada grupo da planilha para toggleGroup funcionar
-  DATA_COM_EMAIL.forEach((g, i) => { g._idx = DATA.indexOf(DATA.find(d => d.h === g.h && d.c === g.c)) ?? i; });
+  // Marcar _idx em cada grupo — sempre string para consistência
+  DATA_COM_EMAIL.forEach((g, i) => {
+    const realIdx = DATA.indexOf(DATA.find(d => d.h === g.h && d.c === g.c));
+    g._idx = String(realIdx >= 0 ? realIdx : i);
+  });
 
   // Grupos de email sem correspondência na planilha
   const hNormFn = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -1247,12 +1250,12 @@ function renderGroups() {
   }).join('');
 
   list.innerHTML = page.map(g => {
-    const idx = g._idx !== undefined ? g._idx : DATA.indexOf(g);
+    const idx = g._idx !== undefined ? String(g._idx) : String(DATA.indexOf(g));
     const isOpen = OPEN.has(idx);
     const prog = groupProg(g);
     const cot = g.os.filter(o=>o.q==='Cotação').length;
     const emi = g.os.filter(o=>o.q==='Emissão').length;
-    const donoVal = (typeof idx === 'number' && idx >= 0) ? DONO[idx] : '';
+    const donoVal = DONO[parseInt(idx)] || '';
     const urgGrupo = getUrgenciaGrupo(g);
     const consSet = [...new Set(g.os.map(o => normCons(o.cons)))];
 
@@ -1302,7 +1305,7 @@ function renderGroups() {
 
 
     return `<div class="hotel-group" id="grp-${idx}">
-      <div class="hotel-header ${isOpen?'open':''}" id="hdr-${idx}" onclick="toggleGroup(${idx})">
+      <div class="hotel-header ${isOpen?'open':''}" id="hdr-${idx}" onclick="toggleGroup('${idx}')">
         <div class="hh-inner">
           <div class="hh-stripe ${stripeClass(g.tipo)}"></div>
           <div class="hh-info">
@@ -1949,7 +1952,20 @@ function parseArgoEmail(assunto, corpoHtml) {
   r.n = mOs ? parseInt(mOs[1]) : null;
 
   // Status
-  r.q = /cota\u00e7/i.test(assunto) ? 'Cota\u00e7\u00e3o' : 'Emiss\u00e3o';
+  // Status: verificar assunto primeiro, depois corpo para emails encaminhados
+  // O assunto do encaminhamento pode não ter o status correto
+  const temEmissaoAssunto = /emiss/i.test(assunto);
+  const temCotacaoAssunto = /cota[cç]/i.test(assunto);
+  if (temEmissaoAssunto && !temCotacaoAssunto) {
+    r.q = 'Emiss\u00e3o';
+  } else if (temCotacaoAssunto && !temEmissaoAssunto) {
+    r.q = 'Cota\u00e7\u00e3o';
+  } else {
+    // Ambíguos ou ENC: — verificar no corpo do email (assunto original)
+    const temEmissaoCorpo = /Aguardando Emiss/i.test(corpo);
+    const temCotacaoCorpo = /Aguardando Cota/i.test(corpo);
+    r.q = temEmissaoCorpo ? 'Emiss\u00e3o' : temCotacaoCorpo ? 'Cota\u00e7\u00e3o' : 'Emiss\u00e3o';
+  }
 
   // Hóspede
   let mH = corpo.match(/solicita\u00e7\u00e3o para ([A-Z\u00c0-\u00da ]+?)\./i);
@@ -2184,8 +2200,11 @@ function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
 
 // Converte OS de email para formato idêntico ao da planilha
 function osEmailParaFormato(os) {
+  // Respeitar q_orig do Firestore se disponível (mais confiável que o parser)
+  const stFirestore = STATE[os.n];
+  const q = (stFirestore && stFirestore.q_orig) ? stFirestore.q_orig : os.q;
   return {
-    n: os.n, q: os.q, cons: os.cons, t: os.t,
+    n: os.n, q: q, cons: os.cons, t: os.t,
     d: os.d, hosp: os.hosp, apto: os.apto,
     obs_orig: os.obs || '', origem: 'email'
   };
