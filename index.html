@@ -945,7 +945,7 @@ function getFiltered(dataOverride) {
       if (!passaTipo || !passaStatus) return false;
     }
     if (search) {
-      const idxReal = g._idx !== undefined ? parseInt(g._idx) : DATA.indexOf(g);
+      const idxReal = DATA.findIndex(d => d.h === g.h && d.c === g.c);
       const consStr = g.os.map(o => {
         const st = STATE[o.n];
         return (st && st.cons_override) || normCons(o.cons) || '';
@@ -1116,23 +1116,15 @@ function renderGroups() {
     ? mesclarEmailNosGrupos(DATA)
     : DATA;
 
-  // Marcar _idx em cada grupo — sempre string única e consistente
-  DATA_COM_EMAIL.forEach((g, i) => {
-    // Usar índice original do DATA se disponível, senão usar índice no array
-    const realIdx = DATA.findIndex(d => d.h === g.h && d.c === g.c);
-    // Sempre usar índice único — nunca -1
-    g._idx = String(realIdx >= 0 ? realIdx : ('e_' + i));
-  });
-
   // Grupos de email sem correspondência na planilha
   const hNormFn = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
   const gruposEmailNovos = gruposEmailExtra.filter(ge =>
     !DATA.some(g => hNormFn(ge.h||'') === hNormFn(g.h))
   );
-  // Marcar _idx string para grupos de email
-  gruposEmailNovos.forEach(g => { g._idx = 'email_' + normHotel(g.h); });
 
+  // Montar array unificado e marcar _idx como índice posicional único
   const DATA_UNIFICADO = [...DATA_COM_EMAIL, ...gruposEmailNovos];
+  DATA_UNIFICADO.forEach((g, i) => { g._idx = String(i); });
   let filtered = getFiltered(DATA_UNIFICADO);
   const total = filtered.length;
   const totalOS = filtered.reduce((s,g)=>s+g.os.length,0);
@@ -1281,7 +1273,9 @@ function renderGroups() {
     const prog = groupProg(g);
     const cot = g.os.filter(o=>o.q==='Cotação').length;
     const emi = g.os.filter(o=>o.q==='Emissão').length;
-    const donoVal = DONO[parseInt(idx)] || '';
+    // DONO usa índice original do DATA
+    const dataIdx = DATA.findIndex(d => d.h === g.h && d.c === g.c);
+    const donoVal = dataIdx >= 0 ? (DONO[dataIdx] || '') : '';
     const urgGrupo = getUrgenciaGrupo(g);
     const consSet = [...new Set(g.os.map(o => normCons(o.cons)))];
 
