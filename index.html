@@ -945,12 +945,19 @@ function getFiltered(dataOverride) {
       if (!passaTipo || !passaStatus) return false;
     }
     if (search) {
-      const idxReal = DATA.indexOf(g);
-      const hay = (g.h + g.c + g.os.map(o => o.cons).join(' ') + g.os.map(o => String(o.n)).join(' ') + g.os.map(o => o.hosp||'').join(' ') + (DONO[idxReal]||'')).toLowerCase();
+      const idxReal = g._idx !== undefined ? parseInt(g._idx) : DATA.indexOf(g);
+      const consStr = g.os.map(o => {
+        const st = STATE[o.n];
+        return (st && st.cons_override) || normCons(o.cons) || '';
+      }).join(' ');
+      const hay = (g.h + ' ' + g.c + ' ' + consStr + ' ' +
+        g.os.map(o => String(o.n)).join(' ') + ' ' +
+        g.os.map(o => o.hosp||'').join(' ') + ' ' +
+        (DONO[idxReal]||'')).toLowerCase();
       if (!hay.includes(search)) return false;
     }
     if (filterMulti && !g.mc) return false;
-    if (g.os.every(o => STATE[o.n].status === 'Sim')) return false;
+    if (g.os.length > 0 && g.os.every(o => STATE[o.n] && STATE[o.n].status === 'Sim')) return false;
     return true;
   });
 }
@@ -1109,10 +1116,12 @@ function renderGroups() {
     ? mesclarEmailNosGrupos(DATA)
     : DATA;
 
-  // Marcar _idx em cada grupo — sempre string para consistência
+  // Marcar _idx em cada grupo — sempre string única e consistente
   DATA_COM_EMAIL.forEach((g, i) => {
-    const realIdx = DATA.indexOf(DATA.find(d => d.h === g.h && d.c === g.c));
-    g._idx = String(realIdx >= 0 ? realIdx : i);
+    // Usar índice original do DATA se disponível, senão usar índice no array
+    const realIdx = DATA.findIndex(d => d.h === g.h && d.c === g.c);
+    // Sempre usar índice único — nunca -1
+    g._idx = String(realIdx >= 0 ? realIdx : ('e_' + i));
   });
 
   // Grupos de email sem correspondência na planilha
