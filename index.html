@@ -851,12 +851,15 @@ function groupProg(g){ const done=g.os.filter(o=>STATE[o.n].status==='Sim').leng
 // ── NORMALIZAÇÃO DE NOMES DE CONSULTORES ─────────────────────────────────────
 // Mapeia variações conhecidas para o nome canônico
 const NORM_CONS = {
-  'FLAVIA ALVES':    'FLÁVIA ALVES',
-  'FLAVIA RIBEIRO':  'FLÁVIA RIBEIRO',
-  'FATIMA VIEIRA':   'FÁTIMA VIEIRA',
-  'TATIANA SILVA':   'TATIANA SILVA',
-  'STEPHANIE BRUNO': 'STEPHANIE BRUNO',
-  'ISABELA TORRES':  'ISABELA TORRES',
+  'FLAVIA ALVES':       'FLÁVIA ALVES',
+  'FLAVIA RIBEIRO':     'FLÁVIA RIBEIRO',
+  'FATIMA VIEIRA':      'FÁTIMA VIEIRA',
+  'TATIANA SILVA':      'TATIANA SILVA',
+  'STEPHANIE BRUNO':    'STEPHANIE BRUNO',
+  'ISABELA TORRES':     'ISABELA TORRES',
+  // Apelidos/nomes abreviados usados na planilha vs nome completo no ARGO
+  'CLODOALDO QUINTANA': 'Aldo Quintana',
+  'CLODOALDO':          'Aldo Quintana',
   // adicione outros pares se necessário
 };
 function normCons(name) {
@@ -876,6 +879,12 @@ function normCons(name) {
 // Usa palavras em comum — ex: "Stephanie de Paiva Bruno" → "Stephanie Bruno"
 function normConsEmail(nomeEmail) {
   if (!nomeEmail) return '';
+  // Verificar mapeamento direto no NORM_CONS primeiro (ex: Clodoaldo → Aldo)
+  const upSemAcento = nomeEmail.trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  for (const [raw, canonical] of Object.entries(NORM_CONS)) {
+    const rawUp = raw.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+    if (upSemAcento === rawUp || upSemAcento.startsWith(rawUp)) return canonical;
+  }
   const lista = getAllConsultores(); // nomes já normalizados da planilha
   if (!lista.length) return normCons(nomeEmail);
 
@@ -2096,34 +2105,52 @@ function normHotel(s) {
 function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
   const hN = normHotel(hotelEmail);
   const cN = normHotel((cidadeEmail||'').split('/')[0]);
-
-  // Palavras relevantes do nome do hotel (ignora palavras curtas)
   const palavrasH = hN.split(' ').filter(p => p.length > 3);
 
-  let melhor = null, melhorScore = 0;
-  for (const g of DATA) {
-    const gH = normHotel(g.h);
-    const gC = normHotel((g.c||'').split('/')[0]);
+  function calcScore(gH, gC) {
     let score = 0;
-
-    // Match exato = 10 pts
     if (gH === hN) score += 10;
-    // Match parcial direto = 4 pts
     else if (gH.includes(hN) || hN.includes(gH)) score += 4;
     else {
-      // Match por palavras-chave — cada palavra encontrada = 2 pts
       const palavrasG = gH.split(' ').filter(p => p.length > 3);
       const matches = palavrasH.filter(p => gH.includes(p)).length;
       const matchesG = palavrasG.filter(p => hN.includes(p)).length;
       score += (matches + matchesG) * 2;
     }
-
-    // Match de cidade = 3 pts
     if (cN && gC && (gC === cN || gC.includes(cN) || cN.includes(gC))) score += 3;
+    return score;
+  }
 
+  // 1. Buscar primeiro no DATA (planilha atual — mais atualizado)
+  let melhor = null, melhorScore = 0;
+  for (const g of DATA) {
+    const score = calcScore(normHotel(g.h), normHotel((g.c||'').split('/')[0]));
     if (score > melhorScore) { melhorScore = score; melhor = g; }
   }
-  // Exige score mínimo para evitar matches errados
+  if (melhorScore >= 3) return melhor;
+
+  // 2. Fallback: buscar no HOTEIS_ANALISE (histórico/acordo sem OS ativa)
+  for (const h of (HOTEIS_ANALISE||[])) {
+    const score = calcScore(normHotel(h.n), normHotel((h.c||'').split('/')[0]));
+    if (score > melhorScore) {
+      melhorScore = score;
+      // Converter HOTEIS_ANALISE para formato de grupo
+      melhor = {
+        h: h.n, c: h.c,
+        tipo: h.ac ? (h.op === 'divergencia' ? 'div' : 'acordo') : (h.res >= 5 ? 'historico' : 'sem_ref'),
+        tr: h.tm || null,
+        tr_sgl: h.tm || null, tr_dbl: null,
+        ht: [h.tmin, h.tmax].filter(Boolean),
+        ht_sgl: [h.tmin, h.tmax].filter(Boolean), ht_dbl: [],
+        nrh: h.res || 0, nem: h.nc || 0,
+        fp: '', dono: h.cp || '',
+        src: h.ac ? {
+          ti: h.ta ? String(h.ta) : String(h.tm),
+          td: '', tt: '', cond: '', bk: '', em: '', cafe: ''
+        } : null
+      };
+    }
+  }
   return melhorScore >= 3 ? melhor : null;
 }
 
