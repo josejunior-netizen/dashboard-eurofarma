@@ -124,16 +124,49 @@ def carregar_historico(raw_bytes):
 def buscar_sourcing(hotel_name, cidade_str, sourcing):
     hn = norm(hotel_name)
     cn = norm(cidade_str.split("/")[0].strip())
+
+    PALAVRAS_GENERICAS = {'HOTEL','PALACE','POUSADA','APART','PLAZA','PARK',
+                          'PREMIUM','INN','EXPRESS','RESORT','FLAT','COMFORT',
+                          'QUALITY','GRAND','SUITE','EXECUTIVE','SUITES'}
+
+    melhor = None
+    melhor_score = 0
+
     for k, v in sourcing.items():
         kh = norm(v["hotel"])
         kc = norm(v["cidade"])
-        if (hn in kh or kh in hn) and (cn in kc or kc in cn):
-            return v
-    for k, v in sourcing.items():
-        kh = norm(v["hotel"])
-        if hn == kh or (len(hn) > 5 and (hn in kh or kh in hn)):
-            return v
-    return None
+        score = 0
+
+        # Match de nome
+        if hn == kh:
+            score += 10
+        elif hn in kh or kh in hn:
+            score += 4
+        else:
+            ph = [p for p in hn.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS]
+            pk = [p for p in kh.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS]
+            if ph and pk:
+                matches  = sum(1 for p in ph if p in kh)
+                matchesk = sum(1 for p in pk if p in hn)
+                score += (matches + matchesk) * 2
+
+        # Cidade obrigatória quando disponível
+        cidade_bate = cn and kc and (kc == cn or kc in cn or cn in kc)
+        if cn and not cidade_bate:
+            if score < 10:
+                continue
+        elif cidade_bate:
+            score += 5
+
+        # Score mínimo dinâmico
+        palavras_sig = [p for p in hn.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS]
+        score_min = 12 if len(palavras_sig) == 0 else (8 if len(palavras_sig) == 1 else 5)
+
+        if score >= score_min and score > melhor_score:
+            melhor_score = score
+            melhor = v
+
+    return melhor
 
 def buscar_historico(hotel_name, cidade_str, hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento):
     hn = norm(hotel_name)
