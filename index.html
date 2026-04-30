@@ -1905,7 +1905,16 @@ function parseArgoEmail(assunto, corpoHtml) {
 
   // Consultor
   const mC = corpo.match(/Nome do Atendente[:\s]+([^\n\r]+)/i);
-  r.cons = mC ? mC[1].trim().split(/\s{2,}|Centro de Custo|Destinat\u00e1rios|Data:/)[0].trim() : '';
+  if (mC) {
+    let consRaw = mC[1].trim();
+    // Remover sufixos comuns: "; Copastur,", "Centro de Custo", "Destinatários", "Data:"
+    consRaw = consRaw.split(/\s{2,}|Centro de Custo|Destinat\u00e1rios|Data:|;\s*Copastur/i)[0];
+    // Remover ponto e vírgula e texto depois
+    consRaw = consRaw.split(';')[0];
+    r.cons = consRaw.trim();
+  } else {
+    r.cons = '';
+  }
 
   // Bloco HOSPEDAGEM
   const mB = corpo.match(/>>>\s*HOSPEDAGEM([\s\S]*?)>>>\s*SOLICITANTE/i);
@@ -1918,8 +1927,14 @@ function parseArgoEmail(assunto, corpoHtml) {
     if (desc.includes('()')) {
       // Emissão: "NOME HOTEL () ENDEREÇO Cidade/UF (Fone...)"
       r.hotel = desc.split('()')[0].trim().toUpperCase();
-      const mCid = desc.match(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s]+\/[A-Z]{2})\s*\(/);
-      r.cidade = mCid ? mCid[1].trim() : '';
+      // Captura todas as ocorrências de Palavra/UF e pega a última (cidade real)
+      const todosMatches = [...desc.matchAll(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s-]+\/[A-Z]{2})/g)];
+      if (todosMatches.length > 0) {
+        // Pegar a última — geralmente é a cidade/UF antes do (Fone
+        r.cidade = todosMatches[todosMatches.length - 1][1].trim();
+      } else {
+        r.cidade = '';
+      }
     } else if (/^[^-]+\s*-\s*[^-]+\s*-/.test(desc)) {
       // Cotação: "Cidade - Nome Hotel - (Fone...)"
       const p = desc.split(/\s*-\s*/);
@@ -2037,19 +2052,35 @@ function normHotel(s) {
 function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
   const hN = normHotel(hotelEmail);
   const cN = normHotel((cidadeEmail||'').split('/')[0]);
+
+  // Palavras relevantes do nome do hotel (ignora palavras curtas)
+  const palavrasH = hN.split(' ').filter(p => p.length > 3);
+
   let melhor = null, melhorScore = 0;
   for (const g of DATA) {
     const gH = normHotel(g.h);
     const gC = normHotel((g.c||'').split('/')[0]);
     let score = 0;
-    // Match exato de hotel = 3 pts, parcial = 1 pt
-    if (gH === hN) score += 3;
-    else if (gH.includes(hN) || hN.includes(gH)) score += 1;
-    // Match de cidade = 2 pts
-    if (cN && gC && (gC === cN || gC.includes(cN) || cN.includes(gC))) score += 2;
+
+    // Match exato = 10 pts
+    if (gH === hN) score += 10;
+    // Match parcial direto = 4 pts
+    else if (gH.includes(hN) || hN.includes(gH)) score += 4;
+    else {
+      // Match por palavras-chave — cada palavra encontrada = 2 pts
+      const palavrasG = gH.split(' ').filter(p => p.length > 3);
+      const matches = palavrasH.filter(p => gH.includes(p)).length;
+      const matchesG = palavrasG.filter(p => hN.includes(p)).length;
+      score += (matches + matchesG) * 2;
+    }
+
+    // Match de cidade = 3 pts
+    if (cN && gC && (gC === cN || gC.includes(cN) || cN.includes(gC))) score += 3;
+
     if (score > melhorScore) { melhorScore = score; melhor = g; }
   }
-  return melhorScore >= 1 ? melhor : null;
+  // Exige score mínimo para evitar matches errados
+  return melhorScore >= 3 ? melhor : null;
 }
 
 // Converte OS de email para formato idêntico ao da planilha
