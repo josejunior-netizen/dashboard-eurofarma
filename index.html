@@ -1980,11 +1980,22 @@ function parseArgoEmail(assunto, corpoHtml) {
     if (desc.includes('()')) {
       // Emissão: "NOME HOTEL () ENDEREÇO Cidade/UF (Fone...)"
       r.hotel = desc.split('()')[0].trim().toUpperCase();
-      // Captura todas as ocorrências de Palavra/UF e pega a última (cidade real)
-      const todosMatches = [...desc.matchAll(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s-]+\/[A-Z]{2})/g)];
+      // Extrair cidade: pegar última ocorrência de Palavra/UF antes do (Fone
+      // e remover bairros/logradouros em MAIÚSCULAS do início
+      const todosMatches = [...desc.matchAll(/([A-Za-z\u00c0-\u00fa][A-Za-z\u00c0-\u00fa\s-]*?\/[A-Z]{2})(?:\s*\(|$)/g)];
       if (todosMatches.length > 0) {
-        // Pegar a última — geralmente é a cidade/UF antes do (Fone
-        r.cidade = todosMatches[todosMatches.length - 1][1].trim();
+        const ultima = todosMatches[todosMatches.length - 1][1].trim();
+        const partes = ultima.split('/');
+        const uf = partes[1];
+        const palavras = partes[0].trim().split(/\s+/);
+        let inicio = 0;
+        for (let i = 0; i < palavras.length - 1; i++) {
+          if (palavras[i] === palavras[i].toUpperCase() && palavras[i].length > 2 &&
+              !/^(DA|DO|DE|DI|DOS|DAS)$/.test(palavras[i])) {
+            inicio = i + 1;
+          }
+        }
+        r.cidade = palavras.slice(inicio).join(' ') + '/' + uf;
       } else {
         r.cidade = '';
       }
