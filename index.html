@@ -2142,17 +2142,37 @@ function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
   const cN = normHotel((cidadeEmail||'').split('/')[0]);
   const palavrasH = hN.split(' ').filter(p => p.length > 3);
 
+  // Palavras genéricas que não devem contar para o match
+  const PALAVRAS_GENERICAS = new Set(['HOTEL','PALACE','POUSADA','APART','SUITE','SUITES',
+    'PLAZA','PARK','PREMIUM','GRAND','GRANDE','PRIME','EXECUTIVE','INN','EXPRESS',
+    'RESORT','FLAT','FLATS','CONFORT','COMFORT','QUALITY','BEST','PLUS']);
+
   function calcScore(gH, gC) {
     let score = 0;
-    if (gH === hN) score += 10;
-    else if (gH.includes(hN) || hN.includes(gH)) score += 4;
-    else {
-      const palavrasG = gH.split(' ').filter(p => p.length > 3);
-      const matches = palavrasH.filter(p => gH.includes(p)).length;
-      const matchesG = palavrasG.filter(p => hN.includes(p)).length;
-      score += (matches + matchesG) * 2;
+
+    // ── Match de cidade (validação principal) ────────────────────────────────
+    const cidadeMatch = cN && gC && (gC === cN || gC.includes(cN) || cN.includes(gC));
+    if (cN && !cidadeMatch) {
+      // Cidade informada mas não bate — score zero, não pode dar match
+      return 0;
     }
-    if (cN && gC && (gC === cN || gC.includes(cN) || cN.includes(gC))) score += 3;
+    if (cidadeMatch) score += 5; // cidade bate — bônus alto
+
+    // ── Match de nome do hotel ───────────────────────────────────────────────
+    if (gH === hN) {
+      score += 10; // exato
+    } else if (gH.includes(hN) || hN.includes(gH)) {
+      score += 4; // parcial direto
+    } else {
+      // Match por palavras significativas (ignora palavras genéricas)
+      const palavrasG = gH.split(' ').filter(p => p.length > 3 && !PALAVRAS_GENERICAS.has(p));
+      const palavrasHSig = palavrasH.filter(p => !PALAVRAS_GENERICAS.has(p));
+      if (palavrasHSig.length > 0 && palavrasG.length > 0) {
+        const matches = palavrasHSig.filter(p => gH.includes(p)).length;
+        const matchesG = palavrasG.filter(p => hN.includes(p)).length;
+        score += (matches + matchesG) * 2;
+      }
+    }
     return score;
   }
 
