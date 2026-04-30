@@ -2510,6 +2510,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
+  console.log('%c[Dashboard v60] fix Blue Inn / Volta Redonda — palavras da cidade não contam como nome do hotel', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   if (typeof DATA === 'undefined' || !Array.isArray(DATA)) {
     setTimeout(iniciarDashboard, 50);
     return;
