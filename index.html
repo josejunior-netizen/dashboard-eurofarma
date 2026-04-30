@@ -872,6 +872,40 @@ function normCons(name) {
   return name.trim().replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
 }
 
+// Normaliza nome do email para bater com nomes da planilha
+// Usa palavras em comum — ex: "Stephanie de Paiva Bruno" → "Stephanie Bruno"
+function normConsEmail(nomeEmail) {
+  if (!nomeEmail) return '';
+  const lista = getAllConsultores(); // nomes já normalizados da planilha
+  if (!lista.length) return normCons(nomeEmail);
+
+  // Remover acentos e converter para maiúsculo para comparar
+  const semAcento = s => s.toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  const palavrasIgnorar = new Set(['DE','DA','DO','DI','DOS','DAS','E','O','A','OS','AS']);
+
+  const emailNorm = semAcento(nomeEmail);
+  const emailPalavras = emailNorm.split(/\s+/).filter(p => p.length > 2 && !palavrasIgnorar.has(p));
+
+  let melhor = null, melhorScore = 0;
+  for (const nome of lista) {
+    const nomeNorm = semAcento(nome);
+    const nomePalavras = nomeNorm.split(/\s+/).filter(p => p.length > 2 && !palavrasIgnorar.has(p));
+
+    // Contar palavras em comum
+    const emComum = emailPalavras.filter(p => nomePalavras.includes(p)).length;
+    // Score = palavras em comum / max(tamanho das duas listas)
+    const score = emComum / Math.max(emailPalavras.length, nomePalavras.length);
+
+    if (score > melhorScore && emComum >= 1) {
+      melhorScore = score;
+      melhor = nome;
+    }
+  }
+
+  // Retornar match se score >= 0.4 (pelo menos ~40% de palavras em comum)
+  return (melhor && melhorScore >= 0.4) ? melhor : normCons(nomeEmail);
+}
+
 function getFiltered() {
   const search = document.getElementById('searchInput').value.toLowerCase();
   const filterMulti = document.getElementById('filterMulti').checked;
@@ -1903,17 +1937,27 @@ function parseArgoEmail(assunto, corpoHtml) {
   if (!mH) mH = corpo.match(/n\u00famero \d+ para ([A-Z\u00c0-\u00da ]+?) foi/i);
   r.hosp = mH ? mH[1].trim() : '';
 
-  // Consultor
-  const mC = corpo.match(/Nome do Atendente[:\s]+([^\n\r]+)/i);
-  if (mC) {
-    let consRaw = mC[1].trim();
-    // Remover sufixos comuns: "; Copastur,", "Centro de Custo", "Destinatários", "Data:"
+  // Consultor — buscar em INFORMAÇÕES COMPLEMENTARES (após >>> SOLICITANTE)
+  // Isso evita pegar o atendente do encaminhamento (ENC:) que aparece antes
+  const blocoInfo = corpo.match(/>>>\s*INFORMA\u00c7\u00d5ES COMPLEMENTARES([\s\S]*?)$/i);
+  const fonteConsultor = blocoInfo ? blocoInfo[1] : corpo;
+  // Pegar TODOS os "Nome do Atendente" e usar o primeiro dentro do bloco correto
+  const todosAtendentes = [...fonteConsultor.matchAll(/Nome do Atendente[:\s]+([^\n\r]+)/gi)];
+  if (todosAtendentes.length > 0) {
+    let consRaw = todosAtendentes[0][1].trim();
     consRaw = consRaw.split(/\s{2,}|Centro de Custo|Destinat\u00e1rios|Data:|;\s*Copastur/i)[0];
-    // Remover ponto e vírgula e texto depois
-    consRaw = consRaw.split(';')[0];
-    r.cons = consRaw.trim();
+    consRaw = consRaw.split(';')[0].trim();
+    // Normalizar para bater com nomes da planilha
+    r.cons = normConsEmail(consRaw);
   } else {
-    r.cons = '';
+    // Fallback: qualquer ocorrência no corpo
+    const mC = corpo.match(/Nome do Atendente[:\s]+([^\n\r]+)/i);
+    if (mC) {
+      let consRaw = mC[1].trim().split(/\s{2,}|;\s*Copastur/i)[0].split(';')[0].trim();
+      r.cons = normConsEmail(consRaw);
+    } else {
+      r.cons = '';
+    }
   }
 
   // Bloco HOSPEDAGEM
