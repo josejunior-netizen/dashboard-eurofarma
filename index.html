@@ -1098,57 +1098,98 @@ function renderGroups() {
   const allCons = getAllConsultores();
 
   // Renderizar grupos novos do email (hotel não existe na planilha)
+  // Renderizar grupos de email novos usando mesma lógica dos grupos da planilha
   const htmlGruposEmailNovos = gruposEmailNovos.map(g => {
-    const idx = 'email_' + g.h;
+    const idx = 'email_' + normHotel(g.h);
     const isOpen = OPEN.has(idx);
-    const osRows = g.os.map(os => {
-      const st = STATE[os.n] || { status:'Pendente', obs:'', cons_override:'' };
+    const prog = groupProg(g);
+    const cot = g.os.filter(o=>o.q==='Cotação').length;
+    const emi = g.os.filter(o=>o.q==='Emissão').length;
+    const urgGrupo = getUrgenciaGrupo(g);
+    const consSet = [...new Set(g.os.map(o => {
+      const st = STATE[o.n];
+      return (st && st.cons_override) || normCons(o.cons) || '';
+    }).filter(Boolean))];
+
+    const osRows = g.os.filter(o => STATE[o.n]?.status !== 'Sim').map(o => {
+      const st = STATE[o.n] || { status:'Pendente', resp:'', obs:'', cons_override:'' };
       const sMap = {'Pendente':'s-pend','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
-      const consNome = st.cons_override || normCons(os.cons) || '—';
+      const consAtual = st.cons_override || normCons(o.cons) || '';
+      const diasOS = getDiasParaCheckin(o.d);
+      const urgOS = getUrgenciaOS(o);
+      const urgCls = urgOS === 'critico' ? 'critico' : urgOS === 'urgente' ? 'urgente' : '';
+      const urgOsLabel = urgOS === 'critico' ? ' 🔴' : urgOS === 'urgente' ? ' 🟡' : '';
+      const hospStr = o.hosp ? `<span style="font-size:11px;color:var(--ink4)">${o.hosp}</span>` : '';
       return `<tr>
-        <td><span class="os-num">#${os.n}</span></td>
+        <td><span class="os-num">#${o.n}</span> <span style="font-size:9px;background:#DBEAFE;color:#1E40AF;padding:1px 5px;border-radius:4px;font-weight:700">📧</span></td>
         <td>
-          <div style="font-size:12px;font-weight:500;color:#374151">${consNome}</div>
-          ${os.hosp?`<span style="font-size:11px;color:var(--ink4)">${os.hosp}</span>`:''}
+          <select class="il" style="font-size:12px;max-width:160px;font-weight:500;color:#374151;padding:2px 6px;cursor:pointer"
+            title="Alterar consultor" onchange="setCons(${o.n},this.value)">
+            ${getAllConsultores().map(c=>`<option value="${c}" ${consAtual===c?'selected':''}>${c}</option>`).join('')}
+          </select>
+          ${hospStr}
         </td>
-        <td><span class="tag ${os.q==='Emissão'?'tag-emi':'tag-cot'}">${os.q}</span></td>
-        <td style="font-size:12px;color:var(--ink3)">${os.apto||'Individual'}</td>
-        <td class="tc">${os.t?'R$ '+os.t:'—'}</td>
-        <td><span class="cc">${os.d||'—'}${os.d_out?' → '+os.d_out:''}</span></td>
-        <td><select class="sst ${sMap[st.status]||'s-pend'}" onchange="setStatus(${os.n},this)">
+        <td><span class="tag ${o.q==='Emissão'?'tag-emi':'tag-cot'}">${o.q}</span></td>
+        <td style="font-size:12px;${o.apto&&o.apto!=='Individual'?'font-weight:600;color:var(--hist-mid)':'color:var(--ink4)'}">${o.apto||'Individual'}</td>
+        <td class="tc">${o.t?'R$ '+o.t:'—'}</td>
+        <td><span class="cc ${urgCls}">${o.d||'—'}${urgOsLabel}</span></td>
+        <td><select class="sst ${sMap[st.status]||'s-pend'}" onchange="setStatus(${o.n},this)">
           <option ${st.status==='Pendente'?'selected':''}>Pendente</option>
           <option ${st.status==='Cotação hotel'?'selected':''}>Cotação hotel</option>
           <option ${st.status==='Ag. confirmação'?'selected':''}>Ag. confirmação</option>
         </select></td>
-        <td><input class="il" placeholder="Observação…" value="${st.obs||''}" onchange="setObs(${os.n},this.value)"></td>
+        <td><input class="il" placeholder="Observação / localizador…" value="${st.obs}" onchange="setObs(${o.n},this.value)"></td>
       </tr>`;
     }).join('');
-    return `<div class="hotel-group">
-      <div class="hotel-header ${isOpen?'open':''}" onclick="toggleGroup('${idx}')">
+
+    const tarifaTag = g.tr ? `<span class="tag tag-t">Ref. R$ ${g.tr}</span>` : '';
+    const recTag = g.os.length >= 2 ? `<span class="tag" style="background:#f5f3ff;color:#5b21b6;border:1px solid #ddd6fe">${g.os.length} OS</span>` : `<span class="tag tag-n">1 OS</span>`;
+    const consTags = consSet.map(c => `<span class="tag" style="background:#EEF0F8;color:#4B5268;border:1.5px solid #C8CCDE;font-size:10px">👤 ${c}</span>`).join('');
+    const emailTag = `<span class="tag" style="background:#DBEAFE;color:#1E40AF;border-color:#BFDBFE;font-size:10px">📧 Email</span>`;
+
+    return `<div class="hotel-group" id="grp-${idx}">
+      <div class="hotel-header ${isOpen?'open':''} ${urgGrupo==='critico'?'urgencia-critico':urgGrupo==='urgente'?'urgencia-urgente':''}" id="hdr-${idx}" onclick="toggleGroup('${idx}')">
         <div class="hh-inner">
-          <div class="hh-stripe s-sem"></div>
+          <div class="hh-stripe ${stripeClass(g.tipo)}"></div>
           <div class="hh-info">
             <div class="hh-names">
               <div class="hotel-name">${g.h}</div>
               <div class="hotel-city">${g.c}</div>
             </div>
             <div class="hh-tags">
-              <span class="tag tag-sem">Sem Referência</span>
-              <span class="tag tag-n">${g.os.length} OS</span>
-              <span class="tag" style="background:#DBEAFE;color:#1E40AF;border-color:#BFDBFE">📧 Email</span>
+              <span class="tag ${tipoCls(g.tipo)}">${tipoLabel(g.tipo)}</span>
+              ${recTag}
+              ${cot?`<span class="tag tag-cot">${cot} cot.</span>`:''}
+              ${emi?`<span class="tag tag-emi">${emi} emi.</span>`:''}
+              ${tarifaTag}
+              ${consTags}
+              ${emailTag}
+              ${urgGrupo==='critico'?'<span class="tag tag-critico">🔴 Check-in hoje/amanhã</span>':urgGrupo==='urgente'?'<span class="tag tag-urgente">🟡 2-3 dias</span>':''}
             </div>
           </div>
           <div class="hh-actions">
+            ${prog.total>0?`<div class="prog-wrap"><div class="prog-label">${prog.done}/${prog.total}</div></div>`:''}
             <svg class="chevron ${isOpen?'open':''}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 4l4 4-4 4"/></svg>
           </div>
         </div>
       </div>
-      ${isOpen?`<div class="os-panel"><table class="os-table"><thead><tr>
-        <th style="width:80px">Nº OS</th><th>Consultor / Hóspede</th>
-        <th style="width:85px">Tipo OS</th><th style="width:68px">Apto</th>
-        <th style="width:75px">Tarifa</th><th style="width:65px">Check-in</th>
-        <th style="width:135px;text-align:center">Status</th><th>Observação</th>
-      </tr></thead><tbody>${osRows}</tbody></table></div>`:''}
+      ${isOpen?`
+      ${renderRef(g)}
+      <div class="os-panel">
+        <table class="os-table">
+          <thead><tr>
+            <th style="width:80px">Nº OS</th>
+            <th>Consultor / Hóspede</th>
+            <th style="width:85px">Tipo OS</th>
+            <th style="width:68px">Apto</th>
+            <th style="width:75px">Tarifa</th>
+            <th style="width:65px">Check-in</th>
+            <th style="width:135px;text-align:center">Status</th>
+            <th>Observação</th>
+          </tr></thead>
+          <tbody>${osRows}</tbody>
+        </table>
+      </div>`:''}
     </div>`;
   }).join('');
 
@@ -1987,40 +2028,94 @@ function iniciarListenerOsEmail() {
 
 // Mescla OS de email nos grupos existentes ou cria novos grupos
 // Retorna grupos extras (não existem na planilha)
+// Normaliza string para comparação de nomes de hotel
+function normHotel(s) {
+  return (s||'').toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
+}
+
+// Busca grupo existente na planilha pelo nome do hotel (melhor match)
+function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
+  const hN = normHotel(hotelEmail);
+  const cN = normHotel((cidadeEmail||'').split('/')[0]);
+  let melhor = null, melhorScore = 0;
+  for (const g of DATA) {
+    const gH = normHotel(g.h);
+    const gC = normHotel((g.c||'').split('/')[0]);
+    let score = 0;
+    // Match exato de hotel = 3 pts, parcial = 1 pt
+    if (gH === hN) score += 3;
+    else if (gH.includes(hN) || hN.includes(gH)) score += 1;
+    // Match de cidade = 2 pts
+    if (cN && gC && (gC === cN || gC.includes(cN) || cN.includes(gC))) score += 2;
+    if (score > melhorScore) { melhorScore = score; melhor = g; }
+  }
+  return melhorScore >= 1 ? melhor : null;
+}
+
+// Converte OS de email para formato idêntico ao da planilha
+function osEmailParaFormato(os) {
+  return {
+    n: os.n, q: os.q, cons: os.cons, t: os.t,
+    d: os.d, hosp: os.hosp, apto: os.apto,
+    obs_orig: os.obs || '', origem: 'email'
+  };
+}
+
+// Retorna grupos de OS de email que NÃO existem na planilha
+// com estrutura IDÊNTICA aos grupos da planilha (tipo, src, tr, etc.)
 function getGruposEmail() {
   const grupos = {};
   Object.values(OS_EMAIL_STATE).forEach(os => {
-    const osNaplanilha = DATA.some(g => g.os.some(o => o.n === os.n));
-    if (osNaplanilha) return;
-    const key = (os.hotel || 'SEM HOTEL') + '||' + (os.cidade || '');
-    if (!grupos[key]) grupos[key] = { h: os.hotel, c: os.cidade, os: [] };
-    grupos[key].os.push(os);
+    if (DATA.some(g => g.os.some(o => o.n === os.n))) return; // já na planilha
+    const key = normHotel(os.hotel) + '||' + normHotel((os.cidade||'').split('/')[0]);
+    if (!grupos[key]) {
+      // Buscar referência de sourcing/histórico do mesmo hotel na planilha
+      const ref = buscarGrupoReferencia(os.hotel, os.cidade);
+      grupos[key] = ref ? {
+        // Copiar TODOS os campos do grupo de referência
+        h: os.hotel, c: os.cidade,
+        tipo: ref.tipo, tr: ref.tr, dono: ref.dono,
+        mc: false, nrh: ref.nrh, nem: ref.nem,
+        ht: ref.ht, ht_sgl: ref.ht_sgl, ht_dbl: ref.ht_dbl,
+        tr_sgl: ref.tr_sgl, tr_dbl: ref.tr_dbl,
+        fp: ref.fp, src: ref.src, os: []
+      } : {
+        // Sem referência — grupo novo sem histórico
+        h: os.hotel, c: os.cidade,
+        tipo: 'sem_ref', tr: null, dono: '', mc: false,
+        nrh: 0, nem: 0, ht: [], ht_sgl: [], ht_dbl: [],
+        tr_sgl: null, tr_dbl: null, fp: '', src: null, os: []
+      };
+    }
+    grupos[key].os.push(osEmailParaFormato(os));
+  });
+  // Atualizar mc (múltiplos consultores)
+  Object.values(grupos).forEach(g => {
+    const cons = new Set(g.os.map(o => o.cons));
+    g.mc = cons.size > 1;
   });
   return Object.values(grupos);
 }
 
-// Injeta OS de email nos grupos existentes da planilha (mesmo hotel+cidade)
+// Injeta OS de email nos grupos existentes da planilha (mesmo hotel)
 function mesclarEmailNosGrupos(grupos) {
   if (!Object.keys(OS_EMAIL_STATE).length) return grupos;
-  const result = grupos.map(g => {
+  return grupos.map(g => {
     const osExtras = Object.values(OS_EMAIL_STATE).filter(os => {
-      if (DATA.some(d => d.os.some(o => o.n === os.n))) return false; // já na planilha
-      const hNorm = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
-      return hNorm(os.hotel||'') === hNorm(g.h) || (os.cidade||'').toUpperCase().includes((g.c||'').toUpperCase().split('/')[0]);
+      if (DATA.some(d => d.os.some(o => o.n === os.n))) return false;
+      const hN = normHotel(os.hotel||'');
+      const gH = normHotel(g.h);
+      const cN = normHotel((os.cidade||'').split('/')[0]);
+      const gC = normHotel((g.c||'').split('/')[0]);
+      return (hN === gH || gH.includes(hN) || hN.includes(gH)) &&
+             (!cN || !gC || gC.includes(cN) || cN.includes(gC));
     });
     if (!osExtras.length) return g;
-    // Converter OS email para formato compatível com OS da planilha
-    const osEmailFormatadas = osExtras.map(os => ({
-      n: os.n, q: os.q, cons: os.cons, t: os.t,
-      d: os.d, hosp: os.hosp, apto: os.apto,
-      obs_orig: os.obs, origem: 'email'
-    }));
-    return { ...g, os: [...g.os, ...osEmailFormatadas] };
+    return { ...g, os: [...g.os, ...osExtras.map(osEmailParaFormato)] };
   });
-  return result;
 }
 
-// Retorna total de OS vindas por email
+// Retorna total de OS vindas por email não duplicadas
 function contarOsEmail() {
   return Object.values(OS_EMAIL_STATE).filter(os =>
     !DATA.some(g => g.os.some(o => o.n === os.n))
