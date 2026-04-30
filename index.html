@@ -955,20 +955,27 @@ function renderRef(g) {
     const aptos = [...new Set(g.os.map(o=>o.apto||'Individual'))];
     const temDuplo = aptos.includes('Duplo');
     const temIndividual = aptos.some(a=>a!=='Duplo');
+    // Mostrar valor exato da categoria presente nas OS
     if(temIndividual && g.tr_sgl) {
-      const faixa = g.ht_sgl&&g.ht_sgl.length>1 ? ` (R$ ${g.ht_sgl[0]}–R$ ${g.ht_sgl[g.ht_sgl.length-1]})` : '';
-      items+=`<span class="ref-item">Individual: <strong>R$ ${g.tr_sgl}</strong><span style="color:var(--ink4);font-size:11px">${faixa}</span></span>`;
-    } else if(g.tr) {
-      const faixa = g.ht&&g.ht.length>1 ? ` (R$ ${g.ht[0]}–R$ ${g.ht[g.ht.length-1]})` : '';
-      items+=`<span class="ref-item">Tarifa média: <strong>R$ ${g.tr}</strong><span style="color:var(--ink4);font-size:11px">${faixa}</span></span>`;
+      const faixa = g.ht_sgl&&g.ht_sgl.length>1 ? ` <span style="color:var(--ink4);font-size:11px">(variação: R$ ${g.ht_sgl[0]}–R$ ${g.ht_sgl[g.ht_sgl.length-1]})</span>` : '';
+      items+=`<span class="ref-item">🛏 Individual: <strong style="font-size:13px">R$ ${g.tr_sgl}</strong>${faixa}</span>`;
     }
     if(temDuplo && g.tr_dbl) {
-      const faixa = g.ht_dbl&&g.ht_dbl.length>1 ? ` (R$ ${g.ht_dbl[0]}–R$ ${g.ht_dbl[g.ht_dbl.length-1]})` : '';
-      items+=`<span class="ref-item">Duplo: <strong>R$ ${g.tr_dbl}</strong><span style="color:var(--ink4);font-size:11px">${faixa}</span></span>`;
+      const faixa = g.ht_dbl&&g.ht_dbl.length>1 ? ` <span style="color:var(--ink4);font-size:11px">(variação: R$ ${g.ht_dbl[0]}–R$ ${g.ht_dbl[g.ht_dbl.length-1]})</span>` : '';
+      items+=`<span class="ref-item">🛏🛏 Duplo: <strong style="font-size:13px">R$ ${g.tr_dbl}</strong>${faixa}</span>`;
     }
-    if(g.nrh) items+=`<span class="ref-item">${g.nrh} reservas · ${g.nem} consultores no histórico</span>`;
+    if(!g.tr_sgl && !g.tr_dbl && g.tr) {
+      const faixa = g.ht&&g.ht.length>1 ? ` <span style="color:var(--ink4);font-size:11px">(variação: R$ ${g.ht[0]}–R$ ${g.ht[g.ht.length-1]})</span>` : '';
+      items+=`<span class="ref-item">🛏 Tarifa ref.: <strong style="font-size:13px">R$ ${g.tr}</strong>${faixa}</span>`;
+    }
+    if(g.fp) {
+      const fpIcon = /cart[a\u00e3]o/i.test(g.fp) ? '💳' : /fatura/i.test(g.fp) ? '🧾' : /vcn/i.test(g.fp) ? '🏦' : '💰';
+      items+=`<span class="ref-item">${fpIcon} Pgto.: <strong>${g.fp}</strong></span>`;
+    }
+    if(g.nrh) items+=`<span class="ref-item" style="color:var(--ink4)">${g.nrh} reservas · ${g.nem} consultores no histórico</span>`;
     const cls=g.tipo==='div'?'ref-div':'ref-hist';
     return `<div class="ref-panel ${cls}"><span class="ref-label">${g.tipo==='div'?'Divergência · Ref. Histórico':'Vol. Hotelaria 2026'}</span>${items}</div>`;
+  }
   }
   if(g.tipo==='sem_ref') {
     return `<div class="ref-panel ref-sem"><span class="ref-label">Sem Referência</span><span class="ref-item" style="color:var(--sem-mid)">Nenhum acordo ou histórico encontrado. Cotar do zero. Candidato ao próximo Sourcing.</span></div>`;
