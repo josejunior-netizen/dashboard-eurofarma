@@ -915,14 +915,15 @@ function normConsEmail(nomeEmail) {
   return (melhor && melhorScore >= 0.4) ? melhor : normCons(nomeEmail);
 }
 
-function getFiltered() {
+function getFiltered(dataOverride) {
+  const fonte = dataOverride || DATA;
   const search = document.getElementById('searchInput').value.toLowerCase();
   const filterMulti = document.getElementById('filterMulti').checked;
   const hasFilter = activeFilters.size > 0;
   const tipoFilters = ['acordo','historico','sem_ref','div'];
   const statusFilters = ['rec','cot_os','emi_os','critico','urgente'];
 
-  return DATA.filter((g,i) => {
+  return fonte.filter((g,i) => {
     if (hasFilter) {
       // Para filtros de tipo: OR dentro do grupo de tipo
       const tipoAtivos = [...activeFilters].filter(f => tipoFilters.includes(f));
@@ -944,7 +945,8 @@ function getFiltered() {
       if (!passaTipo || !passaStatus) return false;
     }
     if (search) {
-      const hay = (g.h + g.c + g.os.map(o => o.cons).join(' ') + (DONO[i]||'')).toLowerCase();
+      const idxReal = DATA.indexOf(g);
+      const hay = (g.h + g.c + g.os.map(o => o.cons).join(' ') + (DONO[idxReal]||'')).toLowerCase();
       if (!hay.includes(search)) return false;
     }
     if (filterMulti && !g.mc) return false;
@@ -1082,7 +1084,25 @@ function renderRef(g) {
 function goPage(p){ currentPage=p; renderGroups(); }
 
 function renderGroups() {
-  let filtered = getFiltered();
+  // ── UNIFICAR grupos da planilha + grupos de email num único array ────────────
+  // Isso garante que filtros, ordenação e paginação se aplicam a todos igualmente
+  const gruposEmailExtra = typeof getGruposEmail === 'function' ? getGruposEmail() : [];
+
+  // Mesclar OS de email nos grupos existentes da planilha
+  const DATA_COM_EMAIL = typeof mesclarEmailNosGrupos === 'function'
+    ? mesclarEmailNosGrupos(DATA)
+    : DATA;
+
+  // Adicionar grupos de email que não existem na planilha
+  const hNormFn = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const gruposEmailNovos = gruposEmailExtra.filter(ge =>
+    !DATA.some(g => hNormFn(ge.h||'') === hNormFn(g.h))
+  );
+
+  // Array unificado para filtro/ordenação
+  const DATA_UNIFICADO = [...DATA_COM_EMAIL, ...gruposEmailNovos];
+
+  let filtered = getFiltered(DATA_UNIFICADO);
   const total = filtered.length;
   const totalOS = filtered.reduce((s,g)=>s+g.os.length,0);
   // Aplicar ordenação
@@ -1124,19 +1144,7 @@ function renderGroups() {
   const list = document.getElementById('hotelList');
   const empty = document.getElementById('emptyState');
 
-  // ── OS DE EMAIL: mesclar nos grupos existentes + grupos novos ───────────────
-  const gruposEmail = typeof getGruposEmail === 'function' ? getGruposEmail() : [];
-  // Aplicar mesclagem nas OS de email nos grupos da planilha
-  const pageComEmail = typeof mesclarEmailNosGrupos === 'function' ? mesclarEmailNosGrupos(page) : page;
-  // Grupos de email que não têm correspondência na planilha (novos hotéis)
-  const gruposEmailNovos = gruposEmail.filter(ge =>
-    !page.some(g => {
-      const hNorm = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
-      return hNorm(ge.h||'') === hNorm(g.h);
-    })
-  );
-
-  if(!page.length && gruposEmail.length === 0){ list.innerHTML=''; empty.style.display='block'; return; }
+  if(!page.length){ list.innerHTML=''; empty.style.display='block'; return; }
   empty.style.display='none';
   const allCons = getAllConsultores();
 
@@ -1236,13 +1244,15 @@ function renderGroups() {
     </div>`;
   }).join('');
 
-  list.innerHTML = htmlGruposEmailNovos + pageComEmail.map(g => {
-    const idx = DATA.indexOf(g);
+  list.innerHTML = page.map(g => {
+    const idxData = DATA.indexOf(g);
+    // Grupos de email usam chave string, grupos da planilha usam índice numérico
+    const idx = idxData >= 0 ? idxData : ('email_' + normHotel(g.h));
     const isOpen = OPEN.has(idx);
     const prog = groupProg(g);
     const cot = g.os.filter(o=>o.q==='Cotação').length;
     const emi = g.os.filter(o=>o.q==='Emissão').length;
-    const donoVal = DONO[idx];
+    const donoVal = typeof idx === 'number' ? DONO[idx] : '';
     const urgGrupo = getUrgenciaGrupo(g);
     const consSet = [...new Set(g.os.map(o => normCons(o.cons)))];
 
@@ -2146,18 +2156,25 @@ function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
     if (score > melhorScore) {
       melhorScore = score;
       // Converter HOTEIS_ANALISE para formato de grupo
+      const tipoH = h.ac
+        ? (h.op === 'divergencia' ? 'div' : 'acordo')
+        : (h.res >= 5 ? 'historico' : 'sem_ref');
+      // Tarifa de referência: usar ta (acordo) se existir, senão tm (média histórica)
+      const tarifaRef = h.ta || h.tm || null;
+      const faixaH = [];
+      if (h.tmin) faixaH.push(h.tmin);
+      if (h.tmax && h.tmax !== h.tmin) faixaH.push(h.tmax);
       melhor = {
         h: h.n, c: h.c,
-        tipo: h.ac ? (h.op === 'divergencia' ? 'div' : 'acordo') : (h.res >= 5 ? 'historico' : 'sem_ref'),
-        tr: h.tm || null,
-        tr_sgl: h.tm || null, tr_dbl: null,
-        ht: [h.tmin, h.tmax].filter(Boolean),
-        ht_sgl: [h.tmin, h.tmax].filter(Boolean), ht_dbl: [],
+        tipo: tipoH,
+        tr: tarifaRef,
+        tr_sgl: tarifaRef, tr_dbl: null,
+        ht: faixaH, ht_sgl: faixaH, ht_dbl: [],
         nrh: h.res || 0, nem: h.nc || 0,
         fp: '', dono: h.cp || '',
         src: h.ac ? {
-          ti: h.ta ? String(h.ta) : String(h.tm),
-          td: '', tt: '', cond: '', bk: '', em: '', cafe: ''
+          ti: String(tarifaRef || ''),
+          td: '', tt: '', cond: 'NLRA', bk: '', em: '', cafe: ''
         } : null
       };
     }
