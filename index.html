@@ -2221,107 +2221,91 @@ function normHotel(s) {
 }
 
 // Busca grupo existente na planilha pelo nome do hotel (melhor match)
-function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
-  const hN = normHotel(hotelEmail);
-  const cN = normHotel((cidadeEmail||'').split('/')[0]);
+// ── PALAVRAS GENÉRICAS E calcScore — escopo global ───────────────────────────
+const PALAVRAS_GENERICAS = new Set(['HOTEL','PALACE','POUSADA','APART','SUITE','SUITES',
+  'PLAZA','PARK','PREMIUM','GRAND','GRANDE','PRIME','EXECUTIVE','INN','EXPRESS',
+  'RESORT','FLAT','FLATS','CONFORT','COMFORT','QUALITY','BEST','PLUS']);
+
+// ── PALAVRAS GENÉRICAS (global) ──────────────────────────────────────────────
+// calcScore: calcula compatibilidade entre hotel do email e hotel da base
+// Parâmetros: hEmail/cEmail = hotel/cidade do email; gH/gC = hotel/cidade da base
+function calcScore(hEmail, cEmail, gH, gC) {
+  const hN = normHotel(hEmail);
+  const cN = normHotel((cEmail||'').split('/')[0]);
   const palavrasH = hN.split(' ').filter(p => p.length > 3);
 
-  // Palavras genéricas que não devem contar para o match
-  const PALAVRAS_GENERICAS = new Set(['HOTEL','PALACE','POUSADA','APART','SUITE','SUITES',
-    'PLAZA','PARK','PREMIUM','GRAND','GRANDE','PRIME','EXECUTIVE','INN','EXPRESS',
-    'RESORT','FLAT','FLATS','CONFORT','COMFORT','QUALITY','BEST','PLUS']);
-
-  function calcScore(gH, gC) {
-    let score = 0;
-
-    // ── Match de cidade (validação principal) ────────────────────────────────
-    // Função robusta: considera UF e diferença de palavras
-    function cidadeCompativel(emailC, planC) {
-      if (!emailC) return true;
-      // Normalizar acentos
-      const semAcento = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-      const eN = semAcento(emailC.toUpperCase()).replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
-      const pN = semAcento(planC.toUpperCase()).replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
-      if (eN === pN) return true;
-      const PREP = new Set(['DO','DA','DE','DI','DOS','DAS','E','O','A']);
-      const palE = eN.split(' ').filter(p => p.length > 1 && !PREP.has(p));
-      const palP = pN.split(' ').filter(p => p.length > 1 && !PREP.has(p));
-      // Diferença máxima de 1 palavra
-      if (Math.abs(palE.length - palP.length) > 1) return false;
-      const menor = palE.length <= palP.length ? palE : palP;
-      const maior = palE.length <= palP.length ? palP : palE;
-      return menor.every(p => maior.some(m => m === p || m.includes(p) || p.includes(m)));
-    }
-    // cN pode ter UF: "SAO JOSE" extraído de "Sao Jose/SC"
-    // gC é cidade da planilha sem UF geralmente
-    const cidadeMatch = cidadeCompativel(cN, gC);
-    if (cN && !cidadeMatch) {
-      return 0;
-    }
-    if (cidadeMatch && cN) score += 5; // cidade bate — bônus alto
-
-    // ── Match de nome do hotel ───────────────────────────────────────────────
-    if (gH === hN) {
-      score += 10; // exato
-    } else if (gH.includes(hN) || hN.includes(gH)) {
-      score += 4; // parcial direto
-    } else {
-      // Match por palavras significativas (ignora palavras genéricas)
-      const palavrasG = gH.split(' ').filter(p => p.length > 3 && !PALAVRAS_GENERICAS.has(p));
-      const palavrasHSig = palavrasH.filter(p => !PALAVRAS_GENERICAS.has(p));
-      if (palavrasHSig.length > 0 && palavrasG.length > 0) {
-        const matches = palavrasHSig.filter(p => gH.includes(p)).length;
-        const matchesG = palavrasG.filter(p => hN.includes(p)).length;
-        score += (matches + matchesG) * 2;
-      }
-    }
-    return score;
+  // Cidade: validação robusta com normalização de acentos e limite de palavras
+  function cidadeOK(eC, pC) {
+    if (!eC) return true;
+    const sem = s => s.normalize('NFD').replace(/[̀-ͯ]/g,'')
+      .toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
+    const eN = sem(eC), pN = sem(pC);
+    if (eN === pN) return true;
+    const PREP = new Set(['DO','DA','DE','DI','DOS','DAS','E','O','A']);
+    const pE = eN.split(' ').filter(p => p.length > 1 && !PREP.has(p));
+    const pP = pN.split(' ').filter(p => p.length > 1 && !PREP.has(p));
+    if (Math.abs(pE.length - pP.length) > 1) return false;
+    const menor = pE.length <= pP.length ? pE : pP;
+    const maior = pE.length <= pP.length ? pP : pE;
+    return menor.every(p => maior.some(m => m === p || m.includes(p) || p.includes(m)));
   }
 
-  // 1. Buscar primeiro no DATA (planilha atual — mais atualizado)
+  let score = 0;
+  const cidadeBate = cidadeOK(cN, gC);
+  if (cN && !cidadeBate) return 0; // cidade não bate — descarta
+  if (cidadeBate && cN) score += 5;
+
+  // Match de nome
+  if (gH === hN) score += 10;
+  else if (gH.includes(hN) || hN.includes(gH)) score += 4;
+  else {
+    const pG = gH.split(' ').filter(p => p.length > 3 && !PALAVRAS_GENERICAS.has(p));
+    const pHs = palavrasH.filter(p => !PALAVRAS_GENERICAS.has(p));
+    if (pHs.length > 0 && pG.length > 0) {
+      score += (pHs.filter(p => gH.includes(p)).length + pG.filter(p => hN.includes(p)).length) * 2;
+    }
+  }
+  return score;
+}
+
+function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
+  const hN = normHotel(hotelEmail);
+  const palavrasH = hN.split(' ').filter(p => p.length > 3);
+  const palavrasSignificativas = palavrasH.filter(p => !PALAVRAS_GENERICAS.has(p));
+  const scoreMinimo = palavrasSignificativas.length === 0 ? 12
+                    : palavrasSignificativas.length === 1 ? 8
+                    : 5;
+
   let melhor = null, melhorScore = 0;
+
+  // 1. Buscar no DATA (planilha atual)
   for (const g of DATA) {
-    const score = calcScore(normHotel(g.h), normHotel((g.c||'').split('/')[0]));
+    const score = calcScore(hotelEmail, cidadeEmail, normHotel(g.h), normHotel((g.c||'').split('/')[0]));
     if (score > melhorScore) { melhorScore = score; melhor = g; }
   }
-  if (melhorScore >= 3) return melhor;
+  if (melhorScore >= scoreMinimo) return melhor;
 
-  // 2. Fallback: buscar no HOTEIS_ANALISE (histórico/acordo sem OS ativa)
+  // 2. Fallback: HOTEIS_ANALISE
+  melhor = null; melhorScore = 0;
   for (const h of (HOTEIS_ANALISE||[])) {
-    const score = calcScore(normHotel(h.n), normHotel((h.c||'').split('/')[0]));
+    const score = calcScore(hotelEmail, cidadeEmail, normHotel(h.n), normHotel((h.c||'').split('/')[0]));
     if (score > melhorScore) {
       melhorScore = score;
-      // Converter HOTEIS_ANALISE para formato de grupo
-      const tipoH = h.ac
-        ? (h.op === 'divergencia' ? 'div' : 'acordo')
-        : (h.res >= 5 ? 'historico' : 'sem_ref');
-      // Tarifa de referência: usar ta (acordo) se existir, senão tm (média histórica)
+      const tipoH = h.ac ? (h.op === 'divergencia' ? 'div' : 'acordo') : (h.res >= 5 ? 'historico' : 'sem_ref');
       const tarifaRef = h.ta || h.tm || null;
-      const faixaH = [];
-      if (h.tmin) faixaH.push(h.tmin);
-      if (h.tmax && h.tmax !== h.tmin) faixaH.push(h.tmax);
+      const faixaH = [h.tmin, h.tmax && h.tmax !== h.tmin ? h.tmax : null].filter(Boolean);
       melhor = {
-        h: h.n, c: h.c,
-        tipo: tipoH,
-        tr: tarifaRef,
+        h: h.n, c: h.c, tipo: tipoH, tr: tarifaRef,
         tr_sgl: tarifaRef, tr_dbl: null,
         ht: faixaH, ht_sgl: faixaH, ht_dbl: [],
-        nrh: h.res || 0, nem: h.nc || 0,
-        fp: '', dono: h.cp || '',
-        src: h.ac ? {
-          ti: String(tarifaRef || ''),
-          td: '', tt: '', cond: 'NLRA', bk: '', em: '', cafe: ''
-        } : null
+        nrh: h.res || 0, nem: h.nc || 0, fp: '', dono: h.cp || '',
+        src: h.ac ? { ti: String(tarifaRef||''), td:'', tt:'', cond:'NLRA', bk:'', em:'', cafe:'' } : null
       };
     }
   }
-  // Score mínimo varia: nomes genéricos exigem score mais alto
-  const palavrasSignificativas = palavrasH.filter(p => !PALAVRAS_GENERICAS.has(p));
-  const scoreMinimo = palavrasSignificativas.length === 0 ? 12 // só palavras genéricas: exige match exato + cidade
-                    : palavrasSignificativas.length === 1 ? 8  // 1 palavra significativa: cidade obrigatória + nome
-                    : 5;                                        // 2+ palavras: score normal
   return melhorScore >= scoreMinimo ? melhor : null;
 }
+
 
 // Converte OS de email para formato idêntico ao da planilha
 function osEmailParaFormato(os) {
