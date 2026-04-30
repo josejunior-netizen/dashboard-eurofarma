@@ -976,7 +976,6 @@ function renderRef(g) {
     const cls=g.tipo==='div'?'ref-div':'ref-hist';
     return `<div class="ref-panel ${cls}"><span class="ref-label">${g.tipo==='div'?'Divergência · Ref. Histórico':'Vol. Hotelaria 2026'}</span>${items}</div>`;
   }
-  }
   if(g.tipo==='sem_ref') {
     return `<div class="ref-panel ref-sem"><span class="ref-label">Sem Referência</span><span class="ref-item" style="color:var(--sem-mid)">Nenhum acordo ou histórico encontrado. Cotar do zero. Candidato ao próximo Sourcing.</span></div>`;
   }
@@ -1839,6 +1838,7 @@ function iniciarListenersFirestore() {
 
   _fsListenerOS = db.collection('os_status').onSnapshot(snapshot => {
     setSyncConectado();
+    if (typeof STATE === 'undefined') return; // Dashboard ainda não inicializado
     let mudou = false;
     snapshot.forEach(doc => {
       const n = Number(doc.id);
@@ -1875,6 +1875,7 @@ function iniciarListenersFirestore() {
   }, err => console.error('Listener os_status:', err));
 
   _fsListenerDono = db.collection('grupo_dono').onSnapshot(snapshot => {
+    if (typeof DONO === 'undefined') return;
     let mudou = false;
     snapshot.forEach(doc => {
       const idx = Number(doc.id);
