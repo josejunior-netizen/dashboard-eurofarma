@@ -355,6 +355,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
   <button class="tab" id="tab-btn-cons" onclick="switchTab('cons')">Carga por Consultor</button>
   <button class="tab" id="tab-btn-hoteis" onclick="switchTab('hoteis')">Análise Hotelaria 2026</button>
   <button class="tab" id="tab-btn-historico" onclick="switchTab('historico')">📋 Histórico</button>
+  <button class="tab" id="tab-btn-auditoria" onclick="switchTab('auditoria')" style="display:none">🔍 Auditoria</button>
 </div>
 
 <div class="main">
@@ -448,6 +449,11 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
   <!-- TAB: HOTELARIA -->
   <div id="tab-hoteis" style="display:none">
     <div id="hoteis-content"></div>
+  </div>
+
+  <!-- TAB: AUDITORIA (Fase 0 — visível só para auditores autorizados) -->
+  <div id="tab-auditoria" style="display:none">
+    <div id="auditoria-content" style="padding:0 4px"></div>
   </div>
 
 </div>
@@ -1544,7 +1550,7 @@ function atualizarKPIs() {
 }
 
 window.switchTab = function(tab) {
-  ['op','cons','hoteis','historico'].forEach(t => {
+  ['op','cons','hoteis','historico','auditoria'].forEach(t => {
     const el = document.getElementById('tab-'+t);
     if(el) el.style.display = t===tab ? 'block' : 'none';
   });
@@ -1552,9 +1558,12 @@ window.switchTab = function(tab) {
   document.getElementById('tab-btn-cons').className     = 'tab' + (tab==='cons' ? ' on' : '');
   document.getElementById('tab-btn-hoteis').className   = 'tab' + (tab==='hoteis' ? ' on' : '');
   document.getElementById('tab-btn-historico').className= 'tab' + (tab==='historico' ? ' on' : '');
+  const btnAud = document.getElementById('tab-btn-auditoria');
+  if (btnAud) btnAud.className = 'tab' + (tab==='auditoria' ? ' on' : '');
   if(tab==='cons') renderConsultores();
   if(tab==='hoteis') renderHoteis();
   if(tab==='historico') renderHistorico();
+  if(tab==='auditoria') renderAuditoria();
 };
 
 function getInitials(name) {
@@ -1963,6 +1972,341 @@ async function renderHistorico() {
     c.innerHTML = `<div style="padding:40px;text-align:center;color:var(--red)">Erro ao carregar histórico: ${e.message}</div>`;
   }
 }
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUDITORIA — FASE 0 (compara DATA/planilha × OS_EMAIL_STATE/email do ARGO)
+// Visível apenas para emails autorizados em AUDITORIA_AUTORIZADOS
+// ═══════════════════════════════════════════════════════════════════════════
+const AUDITORIA_AUTORIZADOS = [
+  'jose.junior@copastur.com.br',
+  'tatiana.silva@copastur.com.br',
+  'renato.pires@copastur.com.br',
+];
+
+// Data de corte: OS criadas antes desta data NÃO contam como divergência
+// quando faltam no email (esperado, fluxo do Power Automate começou em 30/04/26)
+const AUDITORIA_DATA_CORTE = new Date(2026, 3, 30); // mês 3 = Abril
+
+// Verifica se o usuário logado tem acesso à aba auditoria.
+// Mostra/esconde o botão da aba conforme o caso.
+function aplicarVisibilidadeAuditoria() {
+  const btn = document.getElementById('tab-btn-auditoria');
+  if (!btn) return;
+  const user = (typeof auth !== 'undefined' && auth.currentUser) ? auth.currentUser : null;
+  const email = user && user.email ? user.email.toLowerCase() : '';
+  btn.style.display = AUDITORIA_AUTORIZADOS.includes(email) ? '' : 'none';
+}
+
+// Tenta extrair data de criação da OS a partir do recebido do email ou do d (check-in).
+// Retorna Date ou null. Usado para classificar OS como "antes da data de corte".
+function dataCriacaoOS(os, osEmail) {
+  // Priorizar timestamp do email (campo recebido)
+  if (osEmail && osEmail.recebido) {
+    const d = new Date(osEmail.recebido);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // Fallback: derivar da data de check-in da planilha (formato dd/mm)
+  // Não é a data de criação, mas serve como proxy: se check-in é antigo, OS é antiga.
+  if (os && os.d) {
+    const m = String(os.d).match(/^(\d{1,2})\/(\d{1,2})/);
+    if (m) {
+      const ano = new Date().getFullYear();
+      return new Date(ano, parseInt(m[2])-1, parseInt(m[1]));
+    }
+  }
+  return null;
+}
+
+// Compara campos de uma OS (planilha vs email) e retorna lista de divergências.
+// Usa calcScore para hotel/cidade (compatível ≥ scoreMinimo) e match exato pra resto.
+function compararOS(osPlan, hPlan, cPlan, osEmail) {
+  const divs = [];
+  // Hotel + cidade — usar calcScore do mesmo modo que mesclagem usa
+  const scoreH = calcScore(osEmail.hotel||'', osEmail.cidade||'',
+                           normHotel(hPlan), normHotel((cPlan||'').split('/')[0]));
+  const minH = scoreMinimoHotel(osEmail.hotel||'', osEmail.cidade||'');
+  if (scoreH < minH) {
+    divs.push({campo:'Hotel/Cidade',
+      planilha: `${hPlan} — ${cPlan}`,
+      email:    `${osEmail.hotel} — ${osEmail.cidade}`});
+  }
+  // Status (Cotação/Emissão)
+  const qPlan = (typeof STATE !== 'undefined' && STATE[osPlan.n] && STATE[osPlan.n].q_orig)
+    ? STATE[osPlan.n].q_orig : osPlan.q;
+  if (osEmail.q && qPlan && osEmail.q !== qPlan) {
+    divs.push({campo:'Status', planilha:qPlan, email:osEmail.q});
+  }
+  // Tarifa — tolerar diferença pequena (R$ 1)
+  if (osPlan.t && osEmail.t && Math.abs(osPlan.t - osEmail.t) > 1) {
+    divs.push({campo:'Tarifa',
+      planilha:'R$ '+osPlan.t, email:'R$ '+osEmail.t});
+  }
+  // Consultor — comparar normalizados
+  const cP = normCons(osPlan.cons||'').toUpperCase();
+  const cE = normCons(osEmail.cons||'').toUpperCase();
+  if (cP && cE && cP !== cE) {
+    divs.push({campo:'Consultor', planilha:osPlan.cons, email:osEmail.cons});
+  }
+  return divs;
+}
+
+// Computa o estado da auditoria comparando DATA × OS_EMAIL_STATE.
+// Retorna { soPlanilha:[], soEmail:[], divergentes:[], soPlanilhaPreCorte:[] }
+function computarAuditoria() {
+  const soPlanilha        = []; // OS na planilha sem email correspondente (pós-corte = problema)
+  const soPlanilhaPreCorte = []; // mesma coisa, mas pré-corte = esperado
+  const soEmail           = []; // OS no email sem planilha correspondente
+  const divergentes       = []; // OS em ambos, mas com algum campo diferente
+
+  const emailPorOS = OS_EMAIL_STATE || {};
+
+  // 1) Iterar planilha
+  if (typeof DATA !== 'undefined') {
+    for (const g of DATA) {
+      for (const o of g.os) {
+        const osEmail = emailPorOS[o.n];
+        if (!osEmail) {
+          // OS só na planilha — classificar pré ou pós-corte
+          const dt = dataCriacaoOS(o, null);
+          const preCorte = dt && dt < AUDITORIA_DATA_CORTE;
+          const item = { n:o.n, hotel:g.h, cidade:g.c, q:o.q, cons:o.cons, d:o.d, t:o.t };
+          if (preCorte) soPlanilhaPreCorte.push(item);
+          else soPlanilha.push(item);
+        } else {
+          // Em ambos — verificar divergências
+          const divs = compararOS(o, g.h, g.c, osEmail);
+          if (divs.length > 0) {
+            divergentes.push({ n:o.n, hotelPlan:g.h, cidadePlan:g.c, divs });
+          }
+        }
+      }
+    }
+  }
+
+  // 2) Iterar email pra achar OS que não estão na planilha
+  const idsPlanilha = new Set();
+  if (typeof DATA !== 'undefined') {
+    for (const g of DATA) for (const o of g.os) idsPlanilha.add(o.n);
+  }
+  Object.values(emailPorOS).forEach(osE => {
+    if (!idsPlanilha.has(osE.n)) {
+      soEmail.push({
+        n: osE.n, hotel: osE.hotel, cidade: osE.cidade,
+        q: osE.q, cons: osE.cons, d: osE.d, t: osE.t,
+        recebido: osE.recebido || ''
+      });
+    }
+  });
+
+  return { soPlanilha, soEmail, divergentes, soPlanilhaPreCorte };
+}
+
+function renderAuditoria() {
+  const c = document.getElementById('auditoria-content');
+  if (!c) return;
+
+  // Garantia adicional: dupla checagem do email autorizado
+  const user = (typeof auth !== 'undefined' && auth.currentUser) ? auth.currentUser : null;
+  const email = user && user.email ? user.email.toLowerCase() : '';
+  if (!AUDITORIA_AUTORIZADOS.includes(email)) {
+    c.innerHTML = '<div style="padding:40px;text-align:center;color:var(--red)">Acesso restrito.</div>';
+    return;
+  }
+
+  const aud = computarAuditoria();
+  const totalPlan  = (typeof DATA !== 'undefined') ? DATA.reduce((s,g)=>s+g.os.length,0) : 0;
+  const totalEmail = Object.keys(OS_EMAIL_STATE || {}).length;
+  // Cobertura = quantas OS da planilha (criadas após corte) também aparecem no email
+  const planPosCorte = totalPlan - aud.soPlanilhaPreCorte.length;
+  const emailMatchPlan = planPosCorte - aud.soPlanilha.length;
+  const cobertura = planPosCorte > 0 ? Math.round((emailMatchPlan / planPosCorte) * 100) : 100;
+
+  const corCob = cobertura >= 95 ? 'var(--green)' : cobertura >= 80 ? '#f59e0b' : 'var(--red)';
+  const dataCorteStr = AUDITORIA_DATA_CORTE.toLocaleDateString('pt-BR');
+
+  // Estilos inline (autossuficientes — não dependem de CSS novo)
+  const styBox = 'background:#fff;border:1px solid #E2E5EE;border-radius:8px;padding:14px 16px;margin-bottom:14px';
+  const styH3 = 'margin:0 0 8px 0;font-size:14px;font-weight:700;color:#2C3E50';
+  const styTbl = 'width:100%;border-collapse:collapse;font-size:12px';
+  const styTh = 'background:#F5F6FA;text-align:left;padding:6px 8px;border-bottom:1px solid #E2E5EE;font-weight:600;color:#4B5268';
+  const styTd = 'padding:6px 8px;border-bottom:1px solid #F0F2F7;color:#2C3E50';
+
+  // Cards de resumo
+  let html = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px">
+      <div style="${styBox};margin:0">
+        <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">Cobertura</div>
+        <div style="font-size:28px;font-weight:700;color:${corCob}">${cobertura}%</div>
+        <div style="font-size:11px;color:#6B7280">${emailMatchPlan} de ${planPosCorte} OS pós-corte</div>
+      </div>
+      <div style="${styBox};margin:0">
+        <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">Total Planilha</div>
+        <div style="font-size:28px;font-weight:700;color:#2C3E50">${totalPlan}</div>
+        <div style="font-size:11px;color:#6B7280">${aud.soPlanilhaPreCorte.length} pré-corte</div>
+      </div>
+      <div style="${styBox};margin:0">
+        <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">Total Email</div>
+        <div style="font-size:28px;font-weight:700;color:#2C3E50">${totalEmail}</div>
+        <div style="font-size:11px;color:#6B7280">recebidos do ARGO</div>
+      </div>
+      <div style="${styBox};margin:0">
+        <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">Divergências</div>
+        <div style="font-size:28px;font-weight:700;color:${aud.divergentes.length?'var(--red)':'var(--green)'}">${aud.divergentes.length}</div>
+        <div style="font-size:11px;color:#6B7280">campos diferentes</div>
+      </div>
+    </div>
+
+    <div style="${styBox};background:#FEF3C7;border-color:#F59E0B">
+      <div style="font-size:13px;color:#92400E">
+        <b>📋 Diagnóstico — não é dado operacional.</b>
+        Esta aba compara OS da planilha com OS recebidas por email do ARGO, para identificar gaps na captura
+        antes de migrar o painel para "email-first". OS criadas antes de ${dataCorteStr} não são contadas como divergência
+        quando faltam no email (esperado — fluxo do Power Automate começou em ${dataCorteStr}).
+        <button onclick="exportarAuditoriaCSV()" style="margin-left:12px;padding:4px 10px;background:#fff;border:1px solid #F59E0B;border-radius:4px;color:#92400E;cursor:pointer;font-weight:600">📥 Exportar CSV</button>
+      </div>
+    </div>
+  `;
+
+  // Lista 1: Só planilha (pós-corte) = problema real
+  html += `
+    <div style="${styBox}">
+      <h3 style="${styH3}">⚠ OS na planilha SEM email correspondente <span style="color:#6B7280;font-weight:400">(pós-corte — provável gap do Power Automate ou parser)</span></h3>
+      ${aud.soPlanilha.length === 0
+        ? '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ Nenhuma — todas as OS pós-corte da planilha foram capturadas pelo email.</div>'
+        : `<div style="overflow-x:auto"><table style="${styTbl}">
+            <tr>
+              <th style="${styTh}">OS</th>
+              <th style="${styTh}">Hotel</th>
+              <th style="${styTh}">Cidade</th>
+              <th style="${styTh}">Status</th>
+              <th style="${styTh}">Consultor</th>
+              <th style="${styTh}">Check-in</th>
+              <th style="${styTh}">Tarifa</th>
+            </tr>
+            ${aud.soPlanilha.map(o => `<tr>
+              <td style="${styTd}"><b>#${o.n}</b></td>
+              <td style="${styTd}">${o.hotel||''}</td>
+              <td style="${styTd}">${o.cidade||''}</td>
+              <td style="${styTd}">${o.q||''}</td>
+              <td style="${styTd}">${o.cons||''}</td>
+              <td style="${styTd}">${o.d||''}</td>
+              <td style="${styTd}">${o.t?'R$ '+o.t:'—'}</td>
+            </tr>`).join('')}
+          </table></div>`}
+    </div>
+  `;
+
+  // Lista 2: Só email = OS recente que ainda não está na planilha
+  html += `
+    <div style="${styBox}">
+      <h3 style="${styH3}">📧 OS no email SEM planilha correspondente <span style="color:#6B7280;font-weight:400">(provável OS recente ainda não consolidada na planilha)</span></h3>
+      ${aud.soEmail.length === 0
+        ? '<div style="color:#6B7280;font-size:13px;padding:8px 0">Nenhuma — todas as OS de email já estão na planilha.</div>'
+        : `<div style="overflow-x:auto"><table style="${styTbl}">
+            <tr>
+              <th style="${styTh}">OS</th>
+              <th style="${styTh}">Hotel</th>
+              <th style="${styTh}">Cidade</th>
+              <th style="${styTh}">Status</th>
+              <th style="${styTh}">Consultor</th>
+              <th style="${styTh}">Check-in</th>
+              <th style="${styTh}">Tarifa</th>
+              <th style="${styTh}">Recebido</th>
+            </tr>
+            ${aud.soEmail.map(o => `<tr>
+              <td style="${styTd}"><b>#${o.n}</b></td>
+              <td style="${styTd}">${o.hotel||''}</td>
+              <td style="${styTd}">${o.cidade||''}</td>
+              <td style="${styTd}">${o.q||''}</td>
+              <td style="${styTd}">${o.cons||''}</td>
+              <td style="${styTd}">${o.d||''}</td>
+              <td style="${styTd}">${o.t?'R$ '+o.t:'—'}</td>
+              <td style="${styTd}" title="${o.recebido||''}">${o.recebido?String(o.recebido).substring(0,16).replace('T',' '):'—'}</td>
+            </tr>`).join('')}
+          </table></div>`}
+    </div>
+  `;
+
+  // Lista 3: Divergências
+  html += `
+    <div style="${styBox}">
+      <h3 style="${styH3}">⚡ OS em ambos com divergência de campos</h3>
+      ${aud.divergentes.length === 0
+        ? '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ Nenhuma divergência detectada — planilha e email batem em todos os campos.</div>'
+        : `<div style="overflow-x:auto"><table style="${styTbl}">
+            <tr>
+              <th style="${styTh}">OS</th>
+              <th style="${styTh}">Campo</th>
+              <th style="${styTh}">Planilha</th>
+              <th style="${styTh}">Email</th>
+            </tr>
+            ${aud.divergentes.flatMap(item =>
+              item.divs.map((d, i) => `<tr>
+                ${i===0
+                  ? `<td style="${styTd}" rowspan="${item.divs.length}"><b>#${item.n}</b><br><span style="font-size:11px;color:#6B7280">${item.hotelPlan}</span></td>`
+                  : ''}
+                <td style="${styTd}">${d.campo}</td>
+                <td style="${styTd};color:#7280A0">${d.planilha||'—'}</td>
+                <td style="${styTd};color:#2C3E50;font-weight:600">${d.email||'—'}</td>
+              </tr>`)
+            ).join('')}
+          </table></div>`}
+    </div>
+  `;
+
+  // Rodapé técnico
+  html += `
+    <div style="text-align:center;color:#6B7280;font-size:11px;padding:10px">
+      Atualizado em ${new Date().toLocaleString('pt-BR')} · OS pré-corte (antes de ${dataCorteStr}) ignoradas no cálculo de cobertura
+    </div>
+  `;
+
+  c.innerHTML = html;
+}
+
+// Exporta a auditoria atual em CSV.
+window.exportarAuditoriaCSV = function() {
+  const aud = computarAuditoria();
+  const linhas = [['categoria','os','hotel_planilha','cidade_planilha','hotel_email','cidade_email','status_planilha','status_email','consultor_planilha','consultor_email','tarifa_planilha','tarifa_email','campo_divergente','observacao']];
+  // Só planilha (pós-corte)
+  aud.soPlanilha.forEach(o => linhas.push([
+    'so_planilha_pos_corte', o.n, o.hotel||'', o.cidade||'', '', '', o.q||'', '', o.cons||'', '', o.t||'', '', '', ''
+  ]));
+  // Só planilha (pré-corte) — informativo
+  aud.soPlanilhaPreCorte.forEach(o => linhas.push([
+    'so_planilha_pre_corte', o.n, o.hotel||'', o.cidade||'', '', '', o.q||'', '', o.cons||'', '', o.t||'', '', '', 'esperado'
+  ]));
+  // Só email
+  aud.soEmail.forEach(o => linhas.push([
+    'so_email', o.n, '', '', o.hotel||'', o.cidade||'', '', o.q||'', '', o.cons||'', '', o.t||'', '', ''
+  ]));
+  // Divergentes
+  aud.divergentes.forEach(item => item.divs.forEach(d => linhas.push([
+    'divergente', item.n, item.hotelPlan||'', item.cidadePlan||'', '', '',
+    d.campo==='Status'?d.planilha:'', d.campo==='Status'?d.email:'',
+    d.campo==='Consultor'?d.planilha:'', d.campo==='Consultor'?d.email:'',
+    d.campo==='Tarifa'?d.planilha:'', d.campo==='Tarifa'?d.email:'',
+    d.campo, d.campo==='Hotel/Cidade'?(d.planilha+' vs '+d.email):''
+  ])));
+
+  // CSV (escape de aspas e quebra de linha)
+  const csv = linhas.map(row => row.map(v => {
+    const s = String(v==null?'':v);
+    return /[",\n;]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  }).join(';')).join('\n');
+
+  // Download
+  const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `auditoria_${new Date().toISOString().substring(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
 
 
 // ── REPROCESSAR EMAILS JÁ GRAVADOS NO FIRESTORE ─────────────────────────────
@@ -2510,7 +2854,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v60] fix Blue Inn / Volta Redonda — palavras da cidade não contam como nome do hotel', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v61] Fase 0 — auditoria planilha × email do ARGO', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   if (typeof DATA === 'undefined' || !Array.isArray(DATA)) {
     setTimeout(iniciarDashboard, 50);
     return;
@@ -2691,6 +3035,7 @@ function iniciarListenersFirestore() {
 auth.onAuthStateChanged((user) => {
   if (user) {
     mostrarDashboard();
+    aplicarVisibilidadeAuditoria();
     const btnSenha = document.getElementById('btnAlterarSenha');
     if(btnSenha) btnSenha.style.display = 'flex';
   }
