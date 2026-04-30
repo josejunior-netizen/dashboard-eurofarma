@@ -1,5 +1,5 @@
-// Gerado automaticamente em 30/04/2026 09:11
-const DATA_TIMESTAMP = "30/04/2026 09:11";
+// Gerado automaticamente em 30/04/2026 09:24
+const DATA_TIMESTAMP = "30/04/2026 09:24";
 const DATA = [
   {h:"Mirante do Lago Hotel",c:"PIMENTA / MG",tipo:"historico",tr:145,dono:"Flavia Ribeiro",mc:false,nrh:1,nem:1,ht:[145],ht_sgl:[145],ht_dbl:[],tr_sgl:145,tr_dbl:null,fp:"Cartão",src:null,os:[{n:35319,q:"Emissão",cons:"Marcia Abreu",t:120,d:"04/05",hosp:"LARISSA SILVA",apto:"Individual",obs_orig:""},{n:35320,q:"Emissão",cons:"Marcia Abreu",t:120,d:"04/05",hosp:"ALEXANDRE BELTRAO",apto:"Individual",obs_orig:""},{n:35525,q:"Emissão",cons:"Marcia Abreu",t:120,d:"04/05",hosp:"PEDRO ARAUJO",apto:"Individual",obs_orig:"Hospedagem no Balcão R$ 120,00"}]},
   {h:"ACARAU RIVIERA HOTEL",c:"Acarau",tipo:"historico",tr:251,dono:"Katia Laporta",mc:true,nrh:22,nem:17,ht:[200, 220, 260, 280],ht_sgl:[200, 220, 260, 280],ht_dbl:[],tr_sgl:251,tr_dbl:null,fp:"Cartão",src:null,os:[{n:31303,q:"Emissão",cons:"LEONARDO MELLO",t:220,d:"13/05",hosp:"ANA OLIVEIRA",apto:"Individual",obs_orig:""},{n:34517,q:"Emissão",cons:"Stephanie Bruno",t:220,d:"13/05",hosp:"JOSE SOUSA FILHO",apto:"Individual",obs_orig:"Valor negociado Bloco F (R$ 220,00)"}]},
