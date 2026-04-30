@@ -1084,6 +1084,23 @@ function renderRef(g) {
 function goPage(p){ currentPage=p; renderGroups(); }
 
 function renderGroups() {
+  // ── LIMPAR OS_EMAIL_STATE: remover OS que já entraram na planilha ────────────
+  // Isso evita duplicatas quando a planilha atualiza com OS que estavam só no email
+  if (typeof OS_EMAIL_STATE !== 'undefined') {
+    Object.keys(OS_EMAIL_STATE).forEach(n => {
+      const num = parseInt(n);
+      if (DATA.some(g => g.os.some(o => o.n === num))) {
+        // OS entrou na planilha — marcar como processado e remover do cache
+        const firestoreId = OS_EMAIL_STATE[n]?.firestoreId;
+        if (firestoreId) {
+          db.collection('os_email').doc(firestoreId)
+            .update({ processado: true }).catch(() => {});
+        }
+        delete OS_EMAIL_STATE[n];
+      }
+    });
+  }
+
   // ── UNIFICAR grupos da planilha + grupos de email num único array ────────────
   const gruposEmailExtra = typeof getGruposEmail === 'function' ? getGruposEmail() : [];
 
@@ -2202,12 +2219,30 @@ function buscarGrupoReferencia(hotelEmail, cidadeEmail) {
     let score = 0;
 
     // ── Match de cidade (validação principal) ────────────────────────────────
-    const cidadeMatch = cN && gC && (gC === cN || gC.includes(cN) || cN.includes(gC));
+    // Função robusta: considera UF e diferença de palavras
+    function cidadeCompativel(emailC, planC) {
+      if (!emailC) return true;
+      // Normalizar acentos
+      const semAcento = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+      const eN = semAcento(emailC.toUpperCase()).replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
+      const pN = semAcento(planC.toUpperCase()).replace(/[^A-Z0-9 ]/g,' ').replace(/ +/g,' ').trim();
+      if (eN === pN) return true;
+      const PREP = new Set(['DO','DA','DE','DI','DOS','DAS','E','O','A']);
+      const palE = eN.split(' ').filter(p => p.length > 1 && !PREP.has(p));
+      const palP = pN.split(' ').filter(p => p.length > 1 && !PREP.has(p));
+      // Diferença máxima de 1 palavra
+      if (Math.abs(palE.length - palP.length) > 1) return false;
+      const menor = palE.length <= palP.length ? palE : palP;
+      const maior = palE.length <= palP.length ? palP : palE;
+      return menor.every(p => maior.some(m => m === p || m.includes(p) || p.includes(m)));
+    }
+    // cN pode ter UF: "SAO JOSE" extraído de "Sao Jose/SC"
+    // gC é cidade da planilha sem UF geralmente
+    const cidadeMatch = cidadeCompativel(cN, gC);
     if (cN && !cidadeMatch) {
-      // Cidade informada mas não bate — score zero, não pode dar match
       return 0;
     }
-    if (cidadeMatch) score += 5; // cidade bate — bônus alto
+    if (cidadeMatch && cN) score += 5; // cidade bate — bônus alto
 
     // ── Match de nome do hotel ───────────────────────────────────────────────
     if (gH === hN) {
@@ -2287,9 +2322,26 @@ function osEmailParaFormato(os) {
 // Retorna grupos de OS de email que NÃO existem na planilha
 // com estrutura IDÊNTICA aos grupos da planilha (tipo, src, tr, etc.)
 function getGruposEmail() {
+  // Verificar quais OS de email são mescladas nos grupos da planilha via calcScore
+  const osMescladas = new Set();
+  Object.values(OS_EMAIL_STATE).forEach(os => {
+    if (DATA.some(g => g.os.some(o => o.n === os.n))) { osMescladas.add(os.n); return; }
+    // Verificar se vai ser mesclado em algum grupo da planilha
+    const vaiBeMesclado = DATA.some(g => {
+      const score = calcScore(
+        normHotel(os.hotel||''),
+        normHotel((os.cidade||'').split('/')[0]),
+        normHotel(g.h),
+        normHotel((g.c||'').split('/')[0])
+      );
+      return score >= 5;
+    });
+    if (vaiBeMesclado) osMescladas.add(os.n);
+  });
+
   const grupos = {};
   Object.values(OS_EMAIL_STATE).forEach(os => {
-    if (DATA.some(g => g.os.some(o => o.n === os.n))) return; // já na planilha
+    if (osMescladas.has(os.n)) return; // já mesclado ou na planilha
     const key = normHotel(os.hotel) + '||' + normHotel((os.cidade||'').split('/')[0]);
     if (!grupos[key]) {
       // Buscar referência de sourcing/histórico do mesmo hotel na planilha
@@ -2350,19 +2402,26 @@ function getGruposEmail() {
 // Injeta OS de email nos grupos existentes da planilha (mesmo hotel)
 function mesclarEmailNosGrupos(grupos) {
   if (!Object.keys(OS_EMAIL_STATE).length) return grupos;
-  return grupos.map(g => {
+  // Rastrea OS de email já mescladas para não duplicar
+  const jaMescladas = new Set();
+  const resultado = grupos.map(g => {
     const osExtras = Object.values(OS_EMAIL_STATE).filter(os => {
+      if (jaMescladas.has(os.n)) return false;
       if (DATA.some(d => d.os.some(o => o.n === os.n))) return false;
-      const hN = normHotel(os.hotel||'');
-      const gH = normHotel(g.h);
-      const cN = normHotel((os.cidade||'').split('/')[0]);
-      const gC = normHotel((g.c||'').split('/')[0]);
-      return (hN === gH || gH.includes(hN) || hN.includes(gH)) &&
-             (!cN || !gC || gC.includes(cN) || cN.includes(gC));
+      // Usar calcScore para detectar mesmo hotel mesmo com endereço no nome
+      const score = calcScore(
+        normHotel(os.hotel||''),
+        normHotel((os.cidade||'').split('/')[0]),
+        normHotel(g.h),
+        normHotel((g.c||'').split('/')[0])
+      );
+      return score >= 5;
     });
     if (!osExtras.length) return g;
+    osExtras.forEach(os => jaMescladas.add(os.n));
     return { ...g, os: [...g.os, ...osExtras.map(osEmailParaFormato)] };
   });
+  return resultado;
 }
 
 // Retorna total de OS vindas por email não duplicadas
