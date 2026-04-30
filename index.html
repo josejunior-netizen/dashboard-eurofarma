@@ -946,7 +946,7 @@ function getFiltered(dataOverride) {
     }
     if (search) {
       const idxReal = DATA.indexOf(g);
-      const hay = (g.h + g.c + g.os.map(o => o.cons).join(' ') + (DONO[idxReal]||'')).toLowerCase();
+      const hay = (g.h + g.c + g.os.map(o => o.cons).join(' ') + g.os.map(o => String(o.n)).join(' ') + g.os.map(o => o.hosp||'').join(' ') + (DONO[idxReal]||'')).toLowerCase();
       if (!hay.includes(search)) return false;
     }
     if (filterMulti && !g.mc) return false;
@@ -1085,23 +1085,25 @@ function goPage(p){ currentPage=p; renderGroups(); }
 
 function renderGroups() {
   // ── UNIFICAR grupos da planilha + grupos de email num único array ────────────
-  // Isso garante que filtros, ordenação e paginação se aplicam a todos igualmente
   const gruposEmailExtra = typeof getGruposEmail === 'function' ? getGruposEmail() : [];
 
-  // Mesclar OS de email nos grupos existentes da planilha
+  // Mesclar OS de email nos grupos existentes — preservar referência original
   const DATA_COM_EMAIL = typeof mesclarEmailNosGrupos === 'function'
     ? mesclarEmailNosGrupos(DATA)
     : DATA;
 
-  // Adicionar grupos de email que não existem na planilha
+  // Marcar _idx em cada grupo da planilha para toggleGroup funcionar
+  DATA_COM_EMAIL.forEach((g, i) => { g._idx = DATA.indexOf(DATA.find(d => d.h === g.h && d.c === g.c)) ?? i; });
+
+  // Grupos de email sem correspondência na planilha
   const hNormFn = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
   const gruposEmailNovos = gruposEmailExtra.filter(ge =>
     !DATA.some(g => hNormFn(ge.h||'') === hNormFn(g.h))
   );
+  // Marcar _idx string para grupos de email
+  gruposEmailNovos.forEach(g => { g._idx = 'email_' + normHotel(g.h); });
 
-  // Array unificado para filtro/ordenação
   const DATA_UNIFICADO = [...DATA_COM_EMAIL, ...gruposEmailNovos];
-
   let filtered = getFiltered(DATA_UNIFICADO);
   const total = filtered.length;
   const totalOS = filtered.reduce((s,g)=>s+g.os.length,0);
@@ -1245,14 +1247,12 @@ function renderGroups() {
   }).join('');
 
   list.innerHTML = page.map(g => {
-    const idxData = DATA.indexOf(g);
-    // Grupos de email usam chave string, grupos da planilha usam índice numérico
-    const idx = idxData >= 0 ? idxData : ('email_' + normHotel(g.h));
+    const idx = g._idx !== undefined ? g._idx : DATA.indexOf(g);
     const isOpen = OPEN.has(idx);
     const prog = groupProg(g);
     const cot = g.os.filter(o=>o.q==='Cotação').length;
     const emi = g.os.filter(o=>o.q==='Emissão').length;
-    const donoVal = typeof idx === 'number' ? DONO[idx] : '';
+    const donoVal = (typeof idx === 'number' && idx >= 0) ? DONO[idx] : '';
     const urgGrupo = getUrgenciaGrupo(g);
     const consSet = [...new Set(g.os.map(o => normCons(o.cons)))];
 
