@@ -122,12 +122,46 @@ def carregar_historico(raw_bytes):
     return hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento
 
 def buscar_sourcing(hotel_name, cidade_str, sourcing):
+    """
+    Busca acordo de sourcing para o hotel da OS.
+    Regras (mesmas do calcScore JS):
+    - Cidade é REQUISITO (não bate, descarta)
+    - NOME do hotel é OBRIGATÓRIO (sem match de nome, score=0)
+    - Palavras da cidade NÃO contam como nome (ex: VISTA em "Blue Inn Boa Vista")
+    - Núcleo igual em qualquer ordem = match exato (ex: PRATA HOTEL ↔ HOTEL PRATA)
+    - cidade_compativel: match por prefixo (>=4 chars), não substring arbitrário
+    - Threshold dinâmico: 12/8/5 conforme palavras significativas
+    """
     hn = norm(hotel_name)
     cn = norm(cidade_str.split("/")[0].strip())
 
     PALAVRAS_GENERICAS = {'HOTEL','PALACE','POUSADA','APART','PLAZA','PARK',
                           'PREMIUM','INN','EXPRESS','RESORT','FLAT','COMFORT',
-                          'QUALITY','GRAND','SUITE','EXECUTIVE','SUITES'}
+                          'QUALITY','GRAND','SUITE','EXECUTIVE','SUITES','SUITE',
+                          'PLUS','BEST','PRIME','GRANDE','FLATS'}
+
+    # cidade_compativel — match por prefixo (mín 4 chars), não substring arbitrário
+    # Evita "PALMAS" casar com "ALMAS" só porque ALMAS está dentro de PALMAS
+    def cidade_compativel(email_c, plan_c):
+        if not email_c: return True
+        def norm_c(s):
+            s = unicodedata.normalize('NFD', s.upper())
+            s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+            return ' '.join(s.replace('/', ' ').split())
+        eN = norm_c(email_c); pN = norm_c(plan_c)
+        if eN == pN: return True
+        PREP = {'DO','DA','DE','DI','DOS','DAS','E','O','A'}
+        palE = [p for p in eN.split() if len(p) > 1 and p not in PREP]
+        palP = [p for p in pN.split() if len(p) > 1 and p not in PREP]
+        if abs(len(palE) - len(palP)) > 1: return False
+        def palavra_casa(a, b):
+            if a == b: return True
+            if len(a) < 4 or len(b) < 4: return False
+            mn = min(len(a), len(b))
+            return a[:mn] == b[:mn]
+        menor = palE if len(palE) <= len(palP) else palP
+        maior = palP if len(palE) <= len(palP) else palE
+        return all(any(palavra_casa(m, p) for m in maior) for p in menor)
 
     melhor = None
     melhor_score = 0
@@ -135,49 +169,55 @@ def buscar_sourcing(hotel_name, cidade_str, sourcing):
     for k, v in sourcing.items():
         kh = norm(v["hotel"])
         kc = norm(v["cidade"])
-        score = 0
 
-        # Match de nome
-        if hn == kh:
-            score += 10
-        elif hn in kh or kh in hn:
-            score += 4
-        else:
-            ph = [p for p in hn.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS]
-            pk = [p for p in kh.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS]
-            if ph and pk:
-                matches  = sum(1 for p in ph if p in kh)
-                matchesk = sum(1 for p in pk if p in hn)
-                score += (matches + matchesk) * 2
-
-        # Cidade obrigatória com validação robusta
-        def cidade_compativel(email_c, plan_c):
-            if not email_c: return True
-            import unicodedata
-            def norm_c(s):
-                s = unicodedata.normalize('NFD', s.upper())
-                s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
-                return ' '.join(s.replace('/', ' ').split())
-            eN = norm_c(email_c)
-            pN = norm_c(plan_c)
-            if eN == pN: return True
-            PREP = {'DO','DA','DE','DI','DOS','DAS','E','O','A'}
-            palE = [p for p in eN.split() if len(p) > 1 and p not in PREP]
-            palP = [p for p in pN.split() if len(p) > 1 and p not in PREP]
-            if abs(len(palE) - len(palP)) > 1: return False
-            menor = palE if len(palE) <= len(palP) else palP
-            maior = palP if len(palE) <= len(palP) else palE
-            return all(any(m == p or m in p or p in m for m in maior) for p in menor)
-
+        # 1) Cidade é REQUISITO
         cidade_bate = cidade_compativel(cn, kc)
         if cn and not cidade_bate:
-            if score < 10:
-                continue
-        elif cidade_bate and cn:
+            continue
+
+        # Palavras da cidade não devem contar como nome do hotel
+        # Ex: "VISTA" em "Blue Inn Boa Vista" é da cidade Boa Vista
+        palavras_cidade = set()
+        for c in (cn, kc):
+            if c:
+                for p in c.split():
+                    if len(p) > 2:
+                        palavras_cidade.add(p)
+        def nao_eh_cidade(p):
+            return p not in palavras_cidade
+
+        # 2) NOME do hotel é OBRIGATÓRIO
+        score_nome = 0
+        if hn == kh:
+            score_nome = 10
+        else:
+            # 2a) Núcleo do nome (palavras significativas, sem genéricas, sem palavras da cidade)
+            #     resolve "PRATA HOTEL" ↔ "HOTEL PRATA"
+            nucleo_h = set(p for p in hn.split() if len(p) > 2 and p not in PALAVRAS_GENERICAS and nao_eh_cidade(p))
+            nucleo_k = set(p for p in kh.split() if len(p) > 2 and p not in PALAVRAS_GENERICAS and nao_eh_cidade(p))
+            if nucleo_h and nucleo_h == nucleo_k:
+                score_nome = 10
+            elif hn in kh or kh in hn:
+                score_nome = 4
+            else:
+                ph = [p for p in hn.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS and nao_eh_cidade(p)]
+                pk = [p for p in kh.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS and nao_eh_cidade(p)]
+                if ph and pk:
+                    matches  = sum(1 for p in ph if p in kh)
+                    matchesk = sum(1 for p in pk if p in hn)
+                    score_nome = (matches + matchesk) * 2
+
+        # Sem match de nome → não é o mesmo hotel, mesmo na mesma cidade
+        if score_nome == 0:
+            continue
+
+        # 3) Bônus de cidade só faz sentido se já houve match de nome
+        score = score_nome
+        if cidade_bate and cn:
             score += 5
 
-        # Score mínimo dinâmico
-        palavras_sig = [p for p in hn.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS]
+        # Score mínimo dinâmico — desconsiderando palavras da cidade
+        palavras_sig = [p for p in hn.split() if len(p) > 3 and p not in PALAVRAS_GENERICAS and nao_eh_cidade(p)]
         score_min = 12 if len(palavras_sig) == 0 else (8 if len(palavras_sig) == 1 else 5)
 
         if score >= score_min and score > melhor_score:
