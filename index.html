@@ -1081,64 +1081,78 @@ function renderGroups() {
   const list = document.getElementById('hotelList');
   const empty = document.getElementById('emptyState');
 
-  // ── OS DE EMAIL (em tempo real, sem duplicata com planilha) ───────────────
+  // ── OS DE EMAIL: mesclar nos grupos existentes + grupos novos ───────────────
   const gruposEmail = typeof getGruposEmail === 'function' ? getGruposEmail() : [];
-  const emailBanner = gruposEmail.length > 0 ? `
-    <div style="margin-bottom:8px">
-      <div style="background:#EFF6FF;border:1.5px solid #BFDBFE;border-radius:var(--rl);overflow:hidden;box-shadow:var(--shadow)">
-        <div style="background:#2254E8;padding:8px 16px;display:flex;align-items:center;gap:8px">
-          <span style="font-size:13px;font-weight:700;color:#fff">📧 ${gruposEmail.reduce((s,g)=>s+g.os.length,0)} OS recebidas por email — aguardando atualização da planilha</span>
-        </div>
-        ${gruposEmail.map(g => {
-          const osRows = g.os.map(os => {
-            const st = STATE[os.n] || { status:'Pendente', obs:'', cons_override:'' };
-            const sMap={'Pendente':'s-pend','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
-            const consNome = st.cons_override || normCons(os.cons) || '—';
-            return `<tr>
-              <td><span class="os-num">#${os.n}</span></td>
-              <td>
-                <div style="font-size:12px;font-weight:500;color:#374151">${consNome}</div>
-                ${os.hosp ? `<span style="font-size:11px;color:var(--ink4)">${os.hosp}</span>` : ''}
-              </td>
-              <td><span class="tag ${os.q==='Emissão'?'tag-emi':'tag-cot'}">${os.q}</span></td>
-              <td style="font-size:12px;color:var(--ink3)">${os.apto||'Individual'}</td>
-              <td style="font-family:'DM Mono',monospace;font-size:13px">${os.t?'R$ '+os.t:'—'}</td>
-              <td style="font-family:'DM Mono',monospace;font-size:12px">${os.d||'—'}${os.d_out?' → '+os.d_out:''}</td>
-              <td><select class="sst ${sMap[st.status]||'s-pend'}" onchange="setStatus(${os.n},this)">
-                <option ${st.status==='Pendente'?'selected':''}>Pendente</option>
-                <option ${st.status==='Cotação hotel'?'selected':''}>Cotação hotel</option>
-                <option ${st.status==='Ag. confirmação'?'selected':''}>Ag. confirmação</option>
-              </select></td>
-              <td style="min-width:150px"><input class="il" placeholder="Observação…" value="${st.obs||''}" onchange="setObs(${os.n},this.value)"></td>
-            </tr>`;
-          }).join('');
-          return `<div style="border-top:1px solid #BFDBFE;padding:0">
-            <div style="padding:8px 16px;background:#F0F7FF;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <span style="font-weight:700;color:var(--ink);font-size:13px">${g.h}</span>
-              <span style="font-size:11px;color:var(--ink4)">${g.c}</span>
-              <span style="font-size:10px;background:#DBEAFE;color:#1E40AF;padding:2px 8px;border-radius:20px;font-weight:700">📧 Email</span>
-            </div>
-            <div style="overflow-x:auto">
-              <table class="os-table" style="width:100%">
-                <thead><tr style="background:#EFF6FF">
-                  <th style="width:80px">Nº OS</th><th>Consultor / Hóspede</th>
-                  <th style="width:85px">Tipo OS</th><th style="width:68px">Apto</th>
-                  <th style="width:75px">Tarifa</th><th style="width:100px">Período</th>
-                  <th style="width:135px;text-align:center">Status</th><th>Observação</th>
-                </tr></thead>
-                <tbody>${osRows}</tbody>
-              </table>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-    </div>` : '';
+  // Aplicar mesclagem nas OS de email nos grupos da planilha
+  const pageComEmail = typeof mesclarEmailNosGrupos === 'function' ? mesclarEmailNosGrupos(page) : page;
+  // Grupos de email que não têm correspondência na planilha (novos hotéis)
+  const gruposEmailNovos = gruposEmail.filter(ge =>
+    !page.some(g => {
+      const hNorm = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
+      return hNorm(ge.h||'') === hNorm(g.h);
+    })
+  );
 
   if(!page.length && gruposEmail.length === 0){ list.innerHTML=''; empty.style.display='block'; return; }
   empty.style.display='none';
   const allCons = getAllConsultores();
 
-  list.innerHTML = emailBanner + page.map(g => {
+  // Renderizar grupos novos do email (hotel não existe na planilha)
+  const htmlGruposEmailNovos = gruposEmailNovos.map(g => {
+    const idx = 'email_' + g.h;
+    const isOpen = OPEN.has(idx);
+    const osRows = g.os.map(os => {
+      const st = STATE[os.n] || { status:'Pendente', obs:'', cons_override:'' };
+      const sMap = {'Pendente':'s-pend','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
+      const consNome = st.cons_override || normCons(os.cons) || '—';
+      return `<tr>
+        <td><span class="os-num">#${os.n}</span></td>
+        <td>
+          <div style="font-size:12px;font-weight:500;color:#374151">${consNome}</div>
+          ${os.hosp?`<span style="font-size:11px;color:var(--ink4)">${os.hosp}</span>`:''}
+        </td>
+        <td><span class="tag ${os.q==='Emissão'?'tag-emi':'tag-cot'}">${os.q}</span></td>
+        <td style="font-size:12px;color:var(--ink3)">${os.apto||'Individual'}</td>
+        <td class="tc">${os.t?'R$ '+os.t:'—'}</td>
+        <td><span class="cc">${os.d||'—'}${os.d_out?' → '+os.d_out:''}</span></td>
+        <td><select class="sst ${sMap[st.status]||'s-pend'}" onchange="setStatus(${os.n},this)">
+          <option ${st.status==='Pendente'?'selected':''}>Pendente</option>
+          <option ${st.status==='Cotação hotel'?'selected':''}>Cotação hotel</option>
+          <option ${st.status==='Ag. confirmação'?'selected':''}>Ag. confirmação</option>
+        </select></td>
+        <td><input class="il" placeholder="Observação…" value="${st.obs||''}" onchange="setObs(${os.n},this.value)"></td>
+      </tr>`;
+    }).join('');
+    return `<div class="hotel-group">
+      <div class="hotel-header ${isOpen?'open':''}" onclick="toggleGroup('${idx}')">
+        <div class="hh-inner">
+          <div class="hh-stripe s-sem"></div>
+          <div class="hh-info">
+            <div class="hh-names">
+              <div class="hotel-name">${g.h}</div>
+              <div class="hotel-city">${g.c}</div>
+            </div>
+            <div class="hh-tags">
+              <span class="tag tag-sem">Sem Referência</span>
+              <span class="tag tag-n">${g.os.length} OS</span>
+              <span class="tag" style="background:#DBEAFE;color:#1E40AF;border-color:#BFDBFE">📧 Email</span>
+            </div>
+          </div>
+          <div class="hh-actions">
+            <svg class="chevron ${isOpen?'open':''}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 4l4 4-4 4"/></svg>
+          </div>
+        </div>
+      </div>
+      ${isOpen?`<div class="os-panel"><table class="os-table"><thead><tr>
+        <th style="width:80px">Nº OS</th><th>Consultor / Hóspede</th>
+        <th style="width:85px">Tipo OS</th><th style="width:68px">Apto</th>
+        <th style="width:75px">Tarifa</th><th style="width:65px">Check-in</th>
+        <th style="width:135px;text-align:center">Status</th><th>Observação</th>
+      </tr></thead><tbody>${osRows}</tbody></table></div>`:''}
+    </div>`;
+  }).join('');
+
+  list.innerHTML = htmlGruposEmailNovos + pageComEmail.map(g => {
     const idx = DATA.indexOf(g);
     const isOpen = OPEN.has(idx);
     const prog = groupProg(g);
@@ -1163,7 +1177,7 @@ function renderGroups() {
       const urgOsLabel = urgOS === 'critico' ? ' 🔴' : urgOS === 'urgente' ? ' 🟡' : '';
       const hospStr = o.hosp ? `<span style="font-size:11px;color:var(--ink4)">${o.hosp}</span>` : '';
       return `<tr class="${done?'done':''}">
-        <td><span class="os-num">#${o.n}</span></td>
+        <td><span class="os-num">#${o.n}</span>${o.origem==='email'?'<span style="font-size:9px;background:#DBEAFE;color:#1E40AF;padding:1px 5px;border-radius:4px;font-weight:700;margin-left:3px">📧</span>':''}</td>
         <td>
           <select class="il" style="font-size:12px;max-width:160px;font-weight:500;color:#374151;padding:2px 6px;cursor:pointer"
             title="Alterar consultor responsável"
@@ -1373,10 +1387,14 @@ function atualizarKPIs() {
   const n_cot     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Cotação').length,0);
   const n_emi     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Emissão').length,0);
   const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
-  set('kpiTotalOS',     totalOS);
-  set('kpiTotalGrupos', DATA.length + ' grupos hotel+cidade');
-  set('kpiCot',         n_cot);
-  set('kpiEmi',         n_emi);
+  // Somar OS de email nos KPIs
+  const nEmail = typeof contarOsEmail === 'function' ? contarOsEmail() : 0;
+  const emailCot = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Cotação'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))).length;
+  const emailEmi = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Emissão'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))).length;
+  set('kpiTotalOS',     totalOS + nEmail);
+  set('kpiTotalGrupos', DATA.length + ' grupos hotel+cidade' + (nEmail > 0 ? ` · 📧 ${nEmail} por email` : ''));
+  set('kpiCot',         n_cot + emailCot);
+  set('kpiEmi',         n_emi + emailEmi);
   set('kpi-accord',     n_accord);
   set('kpi-hist',       n_hist);
   set('kpi-sem',        n_sem);
@@ -1967,17 +1985,46 @@ function iniciarListenerOsEmail() {
     }, err => console.error('Listener os_email:', err));
 }
 
-// Retorna OS do email que não estão na planilha, agrupadas por hotel+cidade
+// Mescla OS de email nos grupos existentes ou cria novos grupos
+// Retorna grupos extras (não existem na planilha)
 function getGruposEmail() {
   const grupos = {};
   Object.values(OS_EMAIL_STATE).forEach(os => {
     const osNaplanilha = DATA.some(g => g.os.some(o => o.n === os.n));
-    if (osNaplanilha) return; // já está na planilha, não exibir
+    if (osNaplanilha) return;
     const key = (os.hotel || 'SEM HOTEL') + '||' + (os.cidade || '');
     if (!grupos[key]) grupos[key] = { h: os.hotel, c: os.cidade, os: [] };
     grupos[key].os.push(os);
   });
   return Object.values(grupos);
+}
+
+// Injeta OS de email nos grupos existentes da planilha (mesmo hotel+cidade)
+function mesclarEmailNosGrupos(grupos) {
+  if (!Object.keys(OS_EMAIL_STATE).length) return grupos;
+  const result = grupos.map(g => {
+    const osExtras = Object.values(OS_EMAIL_STATE).filter(os => {
+      if (DATA.some(d => d.os.some(o => o.n === os.n))) return false; // já na planilha
+      const hNorm = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
+      return hNorm(os.hotel||'') === hNorm(g.h) || (os.cidade||'').toUpperCase().includes((g.c||'').toUpperCase().split('/')[0]);
+    });
+    if (!osExtras.length) return g;
+    // Converter OS email para formato compatível com OS da planilha
+    const osEmailFormatadas = osExtras.map(os => ({
+      n: os.n, q: os.q, cons: os.cons, t: os.t,
+      d: os.d, hosp: os.hosp, apto: os.apto,
+      obs_orig: os.obs, origem: 'email'
+    }));
+    return { ...g, os: [...g.os, ...osEmailFormatadas] };
+  });
+  return result;
+}
+
+// Retorna total de OS vindas por email
+function contarOsEmail() {
+  return Object.values(OS_EMAIL_STATE).filter(os =>
+    !DATA.some(g => g.os.some(o => o.n === os.n))
+  ).length;
 }
 
 // Garantir que DATA foi carregado antes de iniciar
