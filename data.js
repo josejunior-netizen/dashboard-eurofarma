@@ -1,5 +1,5 @@
-// Gerado automaticamente em 30/04/2026 21:13
-const DATA_TIMESTAMP = "30/04/2026 21:13";
+// Gerado automaticamente em 01/05/2026 04:35
+const DATA_TIMESTAMP = "01/05/2026 04:35";
 const DATA = [
   {h:"Santa Inês/MA/ Hotel Tupinambá",c:"SANTA INES / MA",tipo:"sem_ref",tr:null,dono:"",mc:false,nrh:0,nem:0,ht:[],ht_sgl:[],ht_dbl:[],tr_sgl:null,tr_dbl:null,fp:"",src:null,os:[{n:35943,q:"Emissão",cons:"Aline Scheeren",t:229,d:"13/05",hosp:"MARCOS SOUSA",apto:"Individual",obs_orig:"Hotel que já nos hospedamos há alguns anos, com localização estratégic"},{n:35944,q:"Emissão",cons:"Aline Scheeren",t:229,d:"25/05",hosp:"MARCOS SOUSA",apto:"Individual",obs_orig:"Hotel que já nos hospedamos a alguns anos, com localização estratégica"},{n:35946,q:"Emissão",cons:"Aline Scheeren",t:229,d:"28/05",hosp:"MARCOS SOUSA",apto:"Individual",obs_orig:"Hotel que já nos hospedamos há alguns anos, com localização estratégic"}]},
   {h:"ACARAU RIVIERA HOTEL",c:"Acarau",tipo:"historico",tr:251,dono:"Katia Laporta",mc:true,nrh:22,nem:17,ht:[200, 220, 260, 280],ht_sgl:[200, 220, 260, 280],ht_dbl:[],tr_sgl:251,tr_dbl:null,fp:"Cartão",src:null,os:[{n:31303,q:"Emissão",cons:"LEONARDO MELLO",t:220,d:"13/05",hosp:"ANA OLIVEIRA",apto:"Individual",obs_orig:""},{n:34517,q:"Emissão",cons:"Stephanie Bruno",t:220,d:"13/05",hosp:"JOSE SOUSA FILHO",apto:"Individual",obs_orig:"Valor negociado Bloco F (R$ 220,00)"}]},
