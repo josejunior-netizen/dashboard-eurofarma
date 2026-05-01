@@ -1,5 +1,5 @@
-// Gerado automaticamente em 01/05/2026 11:40
-const DATA_TIMESTAMP = "01/05/2026 11:40";
+// Gerado automaticamente em 01/05/2026 12:37
+const DATA_TIMESTAMP = "01/05/2026 12:37";
 const DATA = [
   {h:"SERRAVITA HOTEL",c:"PIUMHI / MG",tipo:"historico",tr:163,dono:"Flavia Ribeiro",mc:true,nrh:15,nem:11,ht:[160, 170, 190],ht_sgl:[160, 170, 190],ht_dbl:[],tr_sgl:163,tr_dbl:null,fp:"Cartão",src:null,os:[{n:32788,q:"Cotação",cons:"ELI SANTOS",t:null,d:"19/05",hosp:"LARISSA SILVA",apto:"Individual",obs_orig:""},{n:36245,q:"Cotação",cons:"ROSANGELA LIMA",t:null,d:"18/05",hosp:"FREDERICO FERREIRA",apto:"Individual",obs_orig:"PREÇO DA DIRIA 160,00. LOCALIZAÇÃO, CONFORTO"},{n:36246,q:"Cotação",cons:"Stephanie Bruno",t:null,d:"27/05",hosp:"FREDERICO FERREIRA",apto:"Individual",obs_orig:"PREÇO DA DIRIA 160,00. CONFORTO E LOCALIZAÇÃO"}]},
   {h:"CHRISTIAN HOTEL",c:"Itacoatiara",tipo:"historico",tr:190,dono:"Aldo Quintana",mc:false,nrh:10,nem:7,ht:[175, 180, 215],ht_sgl:[175, 180, 215],ht_dbl:[],tr_sgl:190,tr_dbl:null,fp:"Cartão",src:null,os:[{n:35731,q:"Emissão",cons:"ROSANGELA LIMA",t:230,d:"20/05",hosp:"BRUNA LIMA",apto:"Individual",obs_orig:""},{n:36113,q:"Emissão",cons:"ROSANGELA LIMA",t:230,d:"20/05",hosp:"JOSILENE MONTEIRO",apto:"Individual",obs_orig:""}]},
