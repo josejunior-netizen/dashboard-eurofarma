@@ -1665,32 +1665,47 @@ function renderConsultores() {
 
   // Agrupar por consultor responsável (dono do hotel tem prioridade)
   const consMap = {};
+
+  // Helper: registra uma OS no map do consultor
+  const registrar = (cons, q, osN, hotel, cidade, urg) => {
+    if(!cons) return;
+    if(!consMap[cons]) consMap[cons] = {
+      nome: cons, total: 0, cot: 0, emi: 0,
+      cotHotel: 0, agConf: 0, pendente: 0,
+      critico: 0, urgente: 0,
+      hoteis: new Set(), grupos: 0
+    };
+    const c = consMap[cons];
+    c.total++;
+    if(q==='Cotação') c.cot++; else c.emi++;
+    const st = STATE[osN]?.status || 'Pendente';
+    if(st==='Cotação hotel') c.cotHotel++;
+    else if(st==='Ag. confirmação') c.agConf++;
+    else if(st!=='Sim') c.pendente++;
+    if(urg==='critico') c.critico++;
+    else if(urg==='urgente') c.urgente++;
+    c.hoteis.add((hotel||'') + '||' + (cidade||''));
+  };
+
+  // 1) OS da planilha
   DATA.forEach((g,i) => {
     const dono = DONO[i];
     g.os.forEach(o => {
       const cons = normCons(dono || o.cons);
-      if(!cons) return;
-      if(!consMap[cons]) consMap[cons] = {
-        nome: cons, total: 0, cot: 0, emi: 0,
-        cotHotel: 0, agConf: 0, pendente: 0,
-        critico: 0, urgente: 0,
-        hoteis: new Set(), grupos: 0
-      };
-      const c = consMap[cons];
-      c.total++;
-      if(o.q==='Cotação') c.cot++; else c.emi++;
-      const st = STATE[o.n]?.status || 'Pendente';
-      if(st==='Cotação hotel') c.cotHotel++;
-      else if(st==='Ag. confirmação') c.agConf++;
-      else if(st!=='Sim') c.pendente++;
-      // Urgência
-      const urg = getUrgenciaOS(o);
-      if(urg==='critico') c.critico++;
-      else if(urg==='urgente') c.urgente++;
-      // Hotéis únicos
-      c.hoteis.add(g.h + '||' + g.c);
+      registrar(cons, o.q, o.n, g.h, g.c, getUrgenciaOS(o));
     });
   });
+
+  // 2) OS do email que NÃO estão na planilha (pra não duplicar)
+  if (typeof OS_EMAIL_STATE !== 'undefined') {
+    Object.values(OS_EMAIL_STATE).forEach(os => {
+      const naPlanilha = DATA.some(g => g.os.some(o => o.n === os.n));
+      if (naPlanilha) return; // já contado pela planilha
+      const cons = normCons(os.cons);
+      // OS de email não tem cidade no formato "X / UF" — usa só o que tiver
+      registrar(cons, os.q, os.n, os.hotel, os.cidade, getUrgenciaOS(os));
+    });
+  }
 
   // Filtro
   let filtered = Object.values(consMap);
@@ -2163,7 +2178,19 @@ function computarAuditoriaCom(emailPorOS) {
           // Em ambos — verificar divergências
           const divs = compararOS(o, g.h, g.c, osEmail);
           if (divs.length > 0) {
-            divergentes.push({ n:o.n, hotelPlan:g.h, cidadePlan:g.c, divs });
+            divergentes.push({
+              n: o.n,
+              hotelPlan: g.h, cidadePlan: g.c,
+              hotelEmail: osEmail.hotel, cidadeEmail: osEmail.cidade,
+              consPlan: o.cons, consEmail: osEmail.cons,
+              qPlan: o.q, qEmail: osEmail.q,
+              tPlan: o.t, tEmail: osEmail.t,
+              dPlan: o.d, dEmail: osEmail.d,
+              hospPlan: o.hosp || '', hospEmail: osEmail.hosp || '',
+              recebido: osEmail.recebido || '',
+              firestoreId: osEmail.firestoreId || '',
+              divs
+            });
           }
         }
       }
@@ -2348,30 +2375,81 @@ function renderAuditoriaComDados(c, emailCompleto) {
     </div>
   `;
 
-  // Lista 3: Divergências
+  // Lista 3: Divergências — com filtros e detalhes ricos
+  // Contar por tipo de campo
+  const contagemPorCampo = {};
+  aud.divergentes.forEach(item => {
+    item.divs.forEach(d => {
+      contagemPorCampo[d.campo] = (contagemPorCampo[d.campo] || 0) + 1;
+    });
+  });
+
+  // Filtro local — guardado em window pra persistir entre re-renders
+  const filtroAtual = window._auditFiltroDiv || 'todos';
+  const filtrarDivs = (item) => {
+    if (filtroAtual === 'todos') return true;
+    return item.divs.some(d => d.campo === filtroAtual);
+  };
+  const divFiltradas = aud.divergentes.filter(filtrarDivs);
+
+  // Botões de filtro
+  const botaoFiltro = (campo, label, count) => {
+    const ativo = filtroAtual === campo;
+    return `<button onclick="window._auditFiltroDiv='${campo}';renderAuditoria()"
+      style="padding:5px 12px;font-size:12px;border-radius:14px;border:1px solid ${ativo?'#1E40AF':'#D1D5DB'};
+      background:${ativo?'#1E40AF':'#fff'};color:${ativo?'#fff':'#374151'};cursor:pointer;font-weight:${ativo?'700':'500'}">
+      ${label}${count!=null?` (${count})`:''}</button>`;
+  };
+
   html += `
     <div style="${styBox}">
       <h3 style="${styH3}">⚡ OS em ambos com divergência de campos</h3>
       ${aud.divergentes.length === 0
         ? '<div style="color:var(--green);font-size:13px;padding:8px 0">✓ Nenhuma divergência detectada — planilha e email batem em todos os campos.</div>'
-        : `<div style="overflow-x:auto"><table style="${styTbl}">
-            <tr>
-              <th style="${styTh}">OS</th>
-              <th style="${styTh}">Campo</th>
-              <th style="${styTh}">Planilha</th>
-              <th style="${styTh}">Email</th>
-            </tr>
-            ${aud.divergentes.flatMap(item =>
-              item.divs.map((d, i) => `<tr>
+        : `
+          <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <span style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px;margin-right:6px">Filtrar por campo:</span>
+            ${botaoFiltro('todos', 'Todos', aud.divergentes.length)}
+            ${Object.entries(contagemPorCampo).map(([campo, qtd]) => botaoFiltro(campo, campo, qtd)).join('')}
+          </div>
+          <div style="overflow-x:auto"><table style="${styTbl}">
+            <thead>
+              <tr>
+                <th style="${styTh};width:80px">OS</th>
+                <th style="${styTh}">Hotel</th>
+                <th style="${styTh}">Campo</th>
+                <th style="${styTh};color:#92400E">📊 Planilha</th>
+                <th style="${styTh};color:#1E40AF">📧 Email</th>
+                <th style="${styTh};width:140px">Recebido</th>
+              </tr>
+            </thead>
+            <tbody>
+            ${divFiltradas.flatMap(item =>
+              item.divs.filter(d => filtroAtual === 'todos' || d.campo === filtroAtual).map((d, i, arr) => `<tr>
                 ${i===0
-                  ? `<td style="${styTd}" rowspan="${item.divs.length}"><b>#${item.n}</b><br><span style="font-size:11px;color:#6B7280">${item.hotelPlan}</span></td>`
+                  ? `<td style="${styTd};vertical-align:top" rowspan="${arr.length}">
+                       <b>#${item.n}</b>
+                       ${item.firestoreId ? `<br><a href="javascript:void(0)" onclick="verEmailDetalhe('${item.firestoreId}')" style="font-size:10px;color:#1E40AF;text-decoration:underline">ver email</a>` : ''}
+                     </td>
+                     <td style="${styTd};vertical-align:top" rowspan="${arr.length}">
+                       <div style="font-size:11px;color:#92400E">📊 ${item.hotelPlan||'—'}</div>
+                       <div style="font-size:11px;color:#92400E">${item.cidadePlan||'—'}</div>
+                       <div style="font-size:11px;color:#1E40AF;margin-top:4px">📧 ${item.hotelEmail||'—'}</div>
+                       <div style="font-size:11px;color:#1E40AF">${item.cidadeEmail||'—'}</div>
+                     </td>`
                   : ''}
-                <td style="${styTd}">${d.campo}</td>
-                <td style="${styTd};color:#7280A0">${d.planilha||'—'}</td>
-                <td style="${styTd};color:#2C3E50;font-weight:600">${d.email||'—'}</td>
+                <td style="${styTd}"><b>${d.campo}</b></td>
+                <td style="${styTd};color:#92400E;background:#FFFBEB">${d.planilha||'—'}</td>
+                <td style="${styTd};color:#1E40AF;font-weight:600;background:#EFF6FF">${d.email||'—'}</td>
+                ${i===0
+                  ? `<td style="${styTd};vertical-align:top;font-size:10px;color:#6B7280" rowspan="${arr.length}">${item.recebido?String(item.recebido).substring(0,16).replace('T',' '):'—'}</td>`
+                  : ''}
               </tr>`)
             ).join('')}
-          </table></div>`}
+            </tbody>
+          </table></div>
+          ${divFiltradas.length === 0 ? '<div style="padding:14px;color:#6B7280;font-size:12px;text-align:center">Nenhuma divergência neste filtro.</div>' : ''}
+        `}
     </div>
   `;
 
@@ -2384,6 +2462,68 @@ function renderAuditoriaComDados(c, emailCompleto) {
 
   c.innerHTML = html;
 }
+
+// Mostra detalhes do email do ARGO em um modal (lendo do Firestore pelo ID).
+// Usado pela aba Auditoria pra investigar divergências em profundidade.
+window.verEmailDetalhe = function(firestoreId) {
+  if (!firestoreId) return;
+  // Criar overlay/modal se não existir
+  let overlay = document.getElementById('audit-modal-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'audit-modal-overlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.style.display = 'none'; };
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = 'flex';
+  overlay.innerHTML = `
+    <div style="background:#fff;border-radius:8px;padding:24px;max-width:800px;max-height:80vh;overflow:auto;width:90%">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <h3 style="margin:0;font-size:16px">📧 Email do ARGO</h3>
+        <button onclick="document.getElementById('audit-modal-overlay').style.display='none'"
+          style="border:none;background:#F3F4F6;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600">Fechar</button>
+      </div>
+      <div style="color:#6B7280;font-size:13px">Carregando...</div>
+    </div>
+  `;
+  db.collection('os_email').doc(firestoreId).get().then(doc => {
+    if (!doc.exists) {
+      overlay.querySelector('div > div:last-child').innerHTML = '<div style="color:var(--red)">Email não encontrado.</div>';
+      return;
+    }
+    const d = doc.data();
+    let parsed = null;
+    try { parsed = parseArgoEmail(d.assunto, d.corpo); } catch(e) {}
+    const escape = s => String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    overlay.querySelector('div').innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <h3 style="margin:0;font-size:16px">📧 Email do ARGO</h3>
+        <button onclick="document.getElementById('audit-modal-overlay').style.display='none'"
+          style="border:none;background:#F3F4F6;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600">Fechar</button>
+      </div>
+      <div style="font-size:12px;background:#F9FAFB;padding:10px;border-radius:6px;margin-bottom:12px">
+        <div><b>Recebido:</b> ${escape(d.recebido||'—')}</div>
+        <div><b>Processado:</b> ${d.processado ? 'sim' : 'não'}</div>
+        <div><b>Firestore ID:</b> <code style="font-size:11px">${escape(firestoreId)}</code></div>
+      </div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px">Assunto:</div>
+      <div style="font-size:13px;background:#FFF;border:1px solid #E5E7EB;border-radius:4px;padding:8px;margin-bottom:14px;font-family:ui-monospace,monospace">${escape(d.assunto)}</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px">Corpo:</div>
+      <pre style="font-size:11px;background:#FFF;border:1px solid #E5E7EB;border-radius:4px;padding:10px;white-space:pre-wrap;font-family:ui-monospace,monospace;max-height:300px;overflow:auto">${escape(d.corpo)}</pre>
+      ${parsed ? `
+      <div style="font-size:13px;font-weight:600;margin:14px 0 6px">Parser interpretou:</div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        ${Object.entries(parsed).filter(([k]) => k !== 'corpo' && k !== 'assunto').map(([k,v]) => `
+          <tr><td style="padding:4px 8px;border-bottom:1px solid #F0F2F7;color:#6B7280;width:120px"><b>${k}</b></td>
+              <td style="padding:4px 8px;border-bottom:1px solid #F0F2F7">${escape(v)}</td></tr>
+        `).join('')}
+      </table>` : ''}
+    `;
+  }).catch(err => {
+    overlay.querySelector('div > div:last-child').innerHTML = `<div style="color:var(--red)">Erro: ${err.message}</div>`;
+  });
+};
 
 // Exporta a auditoria atual em CSV.
 window.exportarAuditoriaCSV = function() {
@@ -2735,18 +2875,31 @@ function iniciarListenerOsEmail() {
         }
 
         // ── DETECTAR Cotação→Emissão e resetar status (lógica preservada) ────
+        // SÓ reseta se o status ainda está Pendente (consultor não tocou).
+        // Se consultor já marcou "Cotação hotel" ou "Ag. confirmação", respeitar
+        // a decisão e NÃO resetar — evita perder o trabalho da consultora quando
+        // a planilha está atrasada e o ARGO já está em outra etapa.
         const osNaplanilha = DATA.some(g => g.os.some(o => o.n === os.n));
         if (osNaplanilha) {
           for (const g of DATA) {
             const oItem = g.os.find(o => o.n === os.n);
             if (oItem) {
               const qAnterior = STATE[os.n]?.q_orig || oItem.q;
-              if (os.q === 'Emissão' && qAnterior === 'Cotação') {
+              const statusAtual = STATE[os.n]?.status || 'Pendente';
+              if (os.q === 'Emissão' && qAnterior === 'Cotação' && statusAtual === 'Pendente') {
                 if (STATE[os.n]) {
                   STATE[os.n].status = 'Pendente';
                   STATE[os.n].q_orig = 'Emissão';
                   db.collection('os_status').doc(String(os.n))
                     .set({ status: 'Pendente', q_orig: 'Emissão' }, { merge: true })
+                    .catch(() => {});
+                }
+              } else if (os.q === 'Emissão' && qAnterior === 'Cotação') {
+                // Consultor já tocou — apenas atualizar q_orig sem mexer no status
+                if (STATE[os.n]) {
+                  STATE[os.n].q_orig = 'Emissão';
+                  db.collection('os_status').doc(String(os.n))
+                    .set({ q_orig: 'Emissão' }, { merge: true })
                     .catch(() => {});
                 }
               }
@@ -3051,7 +3204,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v64] Email-first + status "Cotação hotel" vira "Aguardando escolha"', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v66] aba Consultor soma email + divergências detalhadas com filtro', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof DATA === 'undefined' || !Array.isArray(DATA)) {
     setTimeout(iniciarDashboard, 50);
@@ -3195,20 +3348,26 @@ function iniciarListenersFirestore() {
       if (STATE[n] !== undefined) {
         const d = doc.data();
         // Detectar se o tipo da OS mudou para Emissão (nova etapa → resetar para Pendente)
+        // SÓ reseta se o status atual em memória está Pendente (consultor não tocou).
+        // Se consultor já marcou outro status, NÃO mexer — preserva trabalho da consultora.
         const statusAtual = STATE[n].status;
         const statusSalvo = d.status || 'Pendente';
         const qAtual = (() => { for(const g of DATA) for(const o of g.os) if(o.n===n) return o.q; return null; })();
         const qAnterior = d.q_orig || STATE[n].q_orig || qAtual;
         const mudouParaEmissao = qAtual === 'Emissão' && qAnterior === 'Cotação';
-        if (mudouParaEmissao) {
-          // Mudou de Cotação → Emissão: reseta status para Pendente (nova etapa)
+        if (mudouParaEmissao && statusAtual === 'Pendente' && statusSalvo === 'Pendente') {
+          // Mudou de Cotação → Emissão e ninguém tocou: reseta para Pendente (limpa)
           STATE[n].status = 'Pendente';
           STATE[n].q_orig = qAtual;
-          // Salvar o novo q_orig no Firestore para não resetar de novo
           db.collection('os_status').doc(String(n)).set({ q_orig: qAtual }, { merge: true }).catch(()=>{});
         } else {
           // Preservar status se já foi alterado pelo usuário
           STATE[n].status = (statusAtual === 'Pendente') ? statusSalvo : statusAtual;
+          // Atualizar q_orig se mudou de etapa (mas sem mexer no status)
+          if (mudouParaEmissao) {
+            STATE[n].q_orig = qAtual;
+            db.collection('os_status').doc(String(n)).set({ q_orig: qAtual }, { merge: true }).catch(()=>{});
+          }
         }
         STATE[n].resp   = d.resp   || STATE[n].resp || '';
         STATE[n].obs    = d.obs    || STATE[n].obs  || '';
