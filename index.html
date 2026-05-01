@@ -153,6 +153,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .tag-dono{background:var(--green-l);color:var(--green-d);border:1.5px solid #A7F3D0;}
 .tag-cot{background:#FFF7ED;color:#92400E;border:1.5px solid #FDE68A;}
 .tag-emi{background:var(--green-l);color:var(--green-d);border:1.5px solid #A7F3D0;}
+.tag-aguardando{background:#EFF6FF;color:#1E40AF;border:1.5px solid #BFDBFE;}
 .tag-critico{background:var(--red-l);color:var(--red-d);border:1.5px solid #FECACA;animation:pulse 1.5s infinite;}
 .tag-urgente{background:var(--amber-l);color:var(--amber-d);border:1.5px solid #FDE68A;}
 .hh-actions{padding:12px 16px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
@@ -365,6 +366,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
     <div class="kpi-row">
       <div class="kpi blue"><div class="kpi-lbl">Total OS</div><div class="kpi-val" id="kpiTotalOS">—</div><div class="kpi-sub" id="kpiTotalGrupos">— grupos</div></div>
       <div class="kpi amber"><div class="kpi-lbl">Ag. Cotação</div><div class="kpi-val" id="kpiCot">—</div><div class="kpi-sub">buscar/negociar tarifa</div></div>
+      <div class="kpi blue"><div class="kpi-lbl">Aguardando escolha</div><div class="kpi-val" id="kpiAgEscolha">—</div><div class="kpi-sub">cliente vai escolher hotel</div></div>
       <div class="kpi green"><div class="kpi-lbl">Ag. Emissão</div><div class="kpi-val" id="kpiEmi">—</div><div class="kpi-sub">tarifa ok, emitir</div></div>
       <div class="kpi teal"><div class="kpi-lbl">Acordo Sourcing</div><div class="kpi-val" id="kpi-accord">—</div><div class="kpi-sub">tarifa negociada 2026</div></div>
       <div class="kpi blue"><div class="kpi-lbl">Com Histórico</div><div class="kpi-val" id="kpi-hist">—</div><div class="kpi-sub">referência Vol. Hotel.</div></div>
@@ -1097,13 +1099,12 @@ function renderRef(g) {
 function goPage(p){ currentPage=p; renderGroups(); }
 
 function renderGroups() {
-  // ── LIMPAR OS_EMAIL_STATE: remover OS que já entraram na planilha ────────────
-  // Isso evita duplicatas quando a planilha atualiza com OS que estavam só no email
-  if (typeof OS_EMAIL_STATE !== 'undefined') {
+  // ── LIMPAR OS_EMAIL_STATE (modo legado planilha-first) ────────────────────
+  // Modo email-first: NÃO deleta. OS_EMAIL_STATE retém todas as OS de email.
+  if (typeof OS_EMAIL_STATE !== 'undefined' && !MODO_EMAIL_FIRST) {
     Object.keys(OS_EMAIL_STATE).forEach(n => {
       const num = parseInt(n);
       if (DATA.some(g => g.os.some(o => o.n === num))) {
-        // OS entrou na planilha — marcar como processado e remover do cache
         const firestoreId = OS_EMAIL_STATE[n]?.firestoreId;
         if (firestoreId) {
           db.collection('os_email').doc(firestoreId)
@@ -1115,12 +1116,38 @@ function renderGroups() {
   }
 
   // ── UNIFICAR grupos da planilha + grupos de email num único array ────────────
+  // Modo email-first: substituir dados da planilha pelos dados do email para OS em ambos.
+  // Email é a fonte primária; planilha é validação. Email mais recente sempre vence.
+  let DATA_BASE = DATA;
+  if (MODO_EMAIL_FIRST && typeof OS_EMAIL_STATE !== 'undefined') {
+    DATA_BASE = DATA.map(g => {
+      const novosOS = g.os.map(o => {
+        const versEmail = OS_EMAIL_STATE[o.n];
+        if (!versEmail) return { ...o, _origem: 'planilha' }; // só na planilha
+        // Em ambos: email ganha. Mantém status/observação editáveis (vêm de STATE).
+        return {
+          ...o,
+          q: versEmail.q || o.q,
+          cons: versEmail.cons || o.cons,
+          hosp: versEmail.hosp || o.hosp,
+          apto: versEmail.apto || o.apto,
+          d: versEmail.d || o.d,
+          t: (versEmail.t != null ? versEmail.t : o.t),
+          fp: versEmail.fp || o.fp,
+          obs_email: versEmail.obs || '',
+          _origem: 'ambos'
+        };
+      });
+      return { ...g, os: novosOS };
+    });
+  }
+
   const gruposEmailExtra = typeof getGruposEmail === 'function' ? getGruposEmail() : [];
 
   // Mesclar OS de email nos grupos existentes — preservar referência original
   const DATA_COM_EMAIL = typeof mesclarEmailNosGrupos === 'function'
-    ? mesclarEmailNosGrupos(DATA)
-    : DATA;
+    ? mesclarEmailNosGrupos(DATA_BASE)
+    : DATA_BASE;
 
   // Grupos de email sem correspondência na planilha
   const hNormFn = s => s.toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -1209,7 +1236,7 @@ function renderGroups() {
           </select>
           ${hospStr}
         </td>
-        <td><span class="tag ${o.q==='Emissão'?'tag-emi':'tag-cot'}">${o.q}</span></td>
+        <td>${renderTagTipoOS(o)}</td>
         <td style="font-size:12px;${o.apto&&o.apto!=='Individual'?'font-weight:600;color:var(--hist-mid)':'color:var(--ink4)'}">${o.apto||'Individual'}</td>
         <td class="tc">${o.t?'R$ '+o.t:'—'}</td>
         <td><span class="cc ${urgCls}">${o.d||'—'}${urgOsLabel}</span></td>
@@ -1300,7 +1327,25 @@ function renderGroups() {
       const urgOsLabel = urgOS === 'critico' ? ' 🔴' : urgOS === 'urgente' ? ' 🟡' : '';
       const hospStr = o.hosp ? `<span style="font-size:11px;color:var(--ink4)">${o.hosp}</span>` : '';
       return `<tr class="${done?'done':''}">
-        <td><span class="os-num">#${o.n}</span>${o.origem==='email'?'<span style="font-size:9px;background:#DBEAFE;color:#1E40AF;padding:1px 5px;border-radius:4px;font-weight:700;margin-left:3px">📧</span>':''}</td>
+        <td><span class="os-num">#${o.n}</span>${(() => {
+          // Badge de origem: 📧 só email, 📊📧 em ambos, 📊 só planilha
+          // Modo legado: só mostra 📧 quando o.origem==='email' (vem de mesclarEmailNosGrupos)
+          if (!MODO_EMAIL_FIRST) {
+            return o.origem==='email' ? '<span style="font-size:9px;background:#DBEAFE;color:#1E40AF;padding:1px 5px;border-radius:4px;font-weight:700;margin-left:3px" title="Vinda do email do ARGO">📧</span>' : '';
+          }
+          // Modo email-first: badges baseado em _origem (planilha/ambos) ou origem (email)
+          const styBase = 'font-size:9px;padding:1px 5px;border-radius:4px;font-weight:700;margin-left:3px';
+          if (o.origem === 'email') {
+            return `<span style="${styBase};background:#DBEAFE;color:#1E40AF" title="Só no email do ARGO">📧</span>`;
+          }
+          if (o._origem === 'ambos') {
+            return `<span style="${styBase};background:#D1FAE5;color:#065F46" title="Confirmada em ambos (email + planilha)">📊📧</span>`;
+          }
+          if (o._origem === 'planilha') {
+            return `<span style="${styBase};background:#FEF3C7;color:#92400E" title="Só na planilha — verificar se ainda existe no ARGO">📊</span>`;
+          }
+          return '';
+        })()}</td>
         <td>
           <select class="il" style="font-size:12px;max-width:160px;font-weight:500;color:#374151;padding:2px 6px;cursor:pointer"
             title="Alterar consultor responsável"
@@ -1309,7 +1354,7 @@ function renderGroups() {
           </select>
           ${hospStr}
         </td>
-        <td><span class="tag ${o.q==='Emissão'?'tag-emi':'tag-cot'}">${o.q}</span></td>
+        <td>${renderTagTipoOS(o)}</td>
         <td style="font-size:12px;${o.apto&&o.apto!=='Individual'?'font-weight:600;color:var(--hist-mid)':'color:var(--ink4)'}">${o.apto||'Individual'}</td>
         <td class="tc ${tarCls}">${o.t?'R$ '+o.t:'—'}</td>
         <td><span class="cc ${urgCls}">${o.d}${urgOsLabel}</span></td>
@@ -1393,7 +1438,26 @@ function setStatus(n,sel){
   const map={'Pendente':'s-pend','Em andamento':'s-and','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
   sel.className=`sst ${map[val]||'s-pend'}`;
   const row=sel.closest('tr'); if(val==='Sim')row.classList.add('done');else row.classList.remove('done');
+  // Atualizar visualmente o tag de tipo da OS na própria linha quando muda para/de "Cotação hotel".
+  // OS de tipo Cotação ganham "Aguardando escolha" quando status="Cotação hotel".
+  const tagTd = row.querySelector('td:nth-child(3)');
+  if (tagTd) {
+    // Procurar a OS no DATA pra saber o tipo q
+    let qOs = null;
+    for (const g of DATA) {
+      const o = g.os.find(x => x.n === n);
+      if (o) { qOs = o.q; break; }
+    }
+    if (qOs == null && typeof OS_EMAIL_STATE !== 'undefined' && OS_EMAIL_STATE[n]) qOs = OS_EMAIL_STATE[n].q;
+    if (qOs === 'Cotação' && val === 'Cotação hotel') {
+      tagTd.innerHTML = '<span class="tag tag-aguardando" title="Cotação enviada — aguardando cliente escolher o hotel">Aguardando escolha</span>';
+    } else if (qOs) {
+      tagTd.innerHTML = `<span class="tag ${qOs==='Emissão'?'tag-emi':'tag-cot'}">${qOs}</span>`;
+    }
+  }
   updateProgBar(sel); updateSummary(); updateCharts();
+  // Atualizar KPIs (Ag. Cotação ↔ Aguardando escolha) imediatamente
+  if (typeof atualizarKPIs === 'function') atualizarKPIs();
   // Buscar nome do hotel para histórico
   const hotelNome = (() => { for(const g of DATA) { if(g.os.some(o=>o.n===n)) return g.h; } return ''; })();
   if(valAntes !== val) gravarHistorico(n, 'status', valAntes, val, hotelNome);
@@ -1507,14 +1571,25 @@ function atualizarKPIs() {
   const n_div     = DATA.filter(g=>g.tipo==='div').length;
   const n_cot     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Cotação').length,0);
   const n_emi     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Emissão').length,0);
+  // OS com status "Cotação hotel" deixam de contar como "Ag. Cotação" e viram "Aguardando escolha".
+  // Isso só se aplica a OS do tipo Cotação (Emissão fica como está).
+  const n_agEscolha = DATA.reduce((s,g)=>s+g.os.filter(o=>
+    o.q==='Cotação' && (STATE[o.n]?.status === 'Cotação hotel')
+  ).length,0);
   const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
   // Somar OS de email nos KPIs
   const nEmail = typeof contarOsEmail === 'function' ? contarOsEmail() : 0;
   const emailCot = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Cotação'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))).length;
   const emailEmi = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Emissão'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))).length;
+  // Email pode ter OS já marcadas como "Cotação hotel" também
+  const emailAgEscolha = Object.values(OS_EMAIL_STATE||{}).filter(os=>
+    os.q==='Cotação' && (STATE[os.n]?.status === 'Cotação hotel') &&
+    !DATA.some(g=>g.os.some(o=>o.n===os.n))
+  ).length;
   set('kpiTotalOS',     totalOS + nEmail);
   set('kpiTotalGrupos', DATA.length + ' grupos hotel+cidade' + (nEmail > 0 ? ` · 📧 ${nEmail} por email` : ''));
-  set('kpiCot',         n_cot + emailCot);
+  set('kpiCot',         (n_cot - n_agEscolha) + (emailCot - emailAgEscolha));
+  set('kpiAgEscolha',   n_agEscolha + emailAgEscolha);
   set('kpiEmi',         n_emi + emailEmi);
   set('kpi-accord',     n_accord);
   set('kpi-hist',       n_hist);
@@ -1565,6 +1640,18 @@ window.switchTab = function(tab) {
   if(tab==='historico') renderHistorico();
   if(tab==='auditoria') renderAuditoria();
 };
+
+// Renderiza o tag de tipo da OS considerando o status atual.
+// Quando o consultor marca "Cotação hotel", o tipo Cotação é exibido como
+// "Aguardando escolha" — significando que a Copastur já cotou e o cliente
+// está escolhendo o hotel. Esse comportamento só vale para OS do tipo Cotação.
+function renderTagTipoOS(o) {
+  const status = (typeof STATE !== 'undefined' && STATE[o.n]) ? STATE[o.n].status : '';
+  if (o.q === 'Cotação' && status === 'Cotação hotel') {
+    return '<span class="tag tag-aguardando" title="Cotação enviada — aguardando cliente escolher o hotel">Aguardando escolha</span>';
+  }
+  return `<span class="tag ${o.q==='Emissão'?'tag-emi':'tag-cot'}">${o.q}</span>`;
+}
 
 function getInitials(name) {
   return name.split(' ').filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('');
@@ -2051,15 +2138,14 @@ function compararOS(osPlan, hPlan, cPlan, osEmail) {
   return divs;
 }
 
-// Computa o estado da auditoria comparando DATA × OS_EMAIL_STATE.
+// Computa o estado da auditoria comparando DATA × emailPorOS.
+// emailPorOS pode ser OS_EMAIL_STATE (limitado) ou um snapshot completo do Firestore.
 // Retorna { soPlanilha:[], soEmail:[], divergentes:[], soPlanilhaPreCorte:[] }
-function computarAuditoria() {
+function computarAuditoriaCom(emailPorOS) {
   const soPlanilha        = []; // OS na planilha sem email correspondente (pós-corte = problema)
   const soPlanilhaPreCorte = []; // mesma coisa, mas pré-corte = esperado
   const soEmail           = []; // OS no email sem planilha correspondente
   const divergentes       = []; // OS em ambos, mas com algum campo diferente
-
-  const emailPorOS = OS_EMAIL_STATE || {};
 
   // 1) Iterar planilha
   if (typeof DATA !== 'undefined') {
@@ -2114,7 +2200,41 @@ function renderAuditoria() {
     return;
   }
 
-  const aud = computarAuditoria();
+  // Em modo email-first, OS_EMAIL_STATE já contém TODAS as OS do email.
+  // Em modo legado, precisamos buscar do Firestore (OS_EMAIL_STATE só tem as não-planilha).
+  if (MODO_EMAIL_FIRST) {
+    renderAuditoriaComDados(c, OS_EMAIL_STATE);
+    return;
+  }
+
+  // Modo legado: ler snapshot completo do Firestore
+  c.innerHTML = '<div style="padding:40px;text-align:center;color:#6B7280">Carregando auditoria — lendo todos os emails do ARGO…</div>';
+
+  db.collection('os_email').get().then(snapshot => {
+    const emailCompleto = {};
+    snapshot.forEach(doc => {
+      const d = doc.data();
+      if (!d.assunto || !d.corpo) return;
+      try {
+        const os = parseArgoEmail(d.assunto, d.corpo);
+        if (!os.n || !os.hotel) return;
+        const recAtual = emailCompleto[os.n]?.recebido || '';
+        const recNovo = d.recebido || '';
+        if (!emailCompleto[os.n] || recNovo > recAtual) {
+          emailCompleto[os.n] = { ...os, firestoreId: doc.id, recebido: recNovo };
+        }
+      } catch(e) {}
+    });
+    renderAuditoriaComDados(c, emailCompleto);
+  }).catch(err => {
+    console.error('Erro lendo os_email:', err);
+    c.innerHTML = `<div style="padding:40px;text-align:center;color:var(--red)">Erro ao carregar auditoria: ${err.message}</div>`;
+  });
+}
+
+// Renderização da aba — recebe o mapa completo de emails (OS → dados parseados)
+function renderAuditoriaComDados(c, emailCompleto) {
+  const aud = computarAuditoriaCom(emailCompleto);
   const totalPlan  = (typeof DATA !== 'undefined') ? DATA.reduce((s,g)=>s+g.os.length,0) : 0;
   const totalEmail = Object.keys(OS_EMAIL_STATE || {}).length;
   // Cobertura = quantas OS da planilha (criadas após corte) também aparecem no email
@@ -2267,7 +2387,30 @@ function renderAuditoria() {
 
 // Exporta a auditoria atual em CSV.
 window.exportarAuditoriaCSV = function() {
-  const aud = computarAuditoria();
+  // Lê snapshot completo do Firestore (mesma lógica do renderAuditoria)
+  db.collection('os_email').get().then(snapshot => {
+    const emailCompleto = {};
+    snapshot.forEach(doc => {
+      const d = doc.data();
+      if (!d.assunto || !d.corpo) return;
+      try {
+        const os = parseArgoEmail(d.assunto, d.corpo);
+        if (!os.n || !os.hotel) return;
+        const recAtual = emailCompleto[os.n]?.recebido || '';
+        const recNovo = d.recebido || '';
+        if (!emailCompleto[os.n] || recNovo > recAtual) {
+          emailCompleto[os.n] = { ...os, firestoreId: doc.id, recebido: recNovo };
+        }
+      } catch(e) {}
+    });
+    const aud = computarAuditoriaCom(emailCompleto);
+    gerarCSVAuditoria(aud);
+  }).catch(err => {
+    alert('Erro ao gerar CSV: ' + err.message);
+  });
+};
+
+function gerarCSVAuditoria(aud) {
   const linhas = [['categoria','os','hotel_planilha','cidade_planilha','hotel_email','cidade_email','status_planilha','status_email','consultor_planilha','consultor_email','tarifa_planilha','tarifa_email','campo_divergente','observacao']];
   // Só planilha (pós-corte)
   aud.soPlanilha.forEach(o => linhas.push([
@@ -2306,7 +2449,7 @@ window.exportarAuditoriaCSV = function() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-};
+}
 
 
 // ── REPROCESSAR EMAILS JÁ GRAVADOS NO FIRESTORE ─────────────────────────────
@@ -2513,9 +2656,60 @@ function parseArgoEmail(assunto, corpoHtml) {
 }
 
 // ── LISTENER OS_EMAIL (tempo real) ────────────────────────────────────────────
-const OS_EMAIL_STATE = {}; // osNum -> dados parseados do email
+const OS_EMAIL_STATE = {}; // osNum -> dados parseados do email (TODAS as OS de email, em ambos os modos)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FEATURE FLAG: MODO_EMAIL_FIRST
+// true:  Email é fonte primária. Painel mostra dados do email se OS está em ambos.
+//        Planilha serve para validação (detectar OS que faltam no email).
+// false: Comportamento legado — planilha é primária; email só preenche OS que
+//        ainda não chegaram na planilha.
+// Mude para false em 1 commit se algo der errado em produção.
+// ─────────────────────────────────────────────────────────────────────────────
+const MODO_EMAIL_FIRST = true;
+
+// Carrega TODOS os emails do ARGO (incluindo já processados) para popular
+// OS_EMAIL_STATE no boot. Roda 1x ao iniciar dashboard. Necessário no modo
+// email-first porque o listener .where('processado','==',false) só pega emails
+// novos — emails antigos (já processados) também precisam estar no estado.
+async function carregarTodosOsEmails() {
+  if (typeof db === 'undefined') return;
+  try {
+    const snap = await db.collection('os_email').get();
+    let carregados = 0;
+    snap.forEach(doc => {
+      const d = doc.data();
+      if (!d.assunto || !d.corpo) return;
+      try {
+        const os = parseArgoEmail(d.assunto, d.corpo);
+        if (!os.n || !os.hotel) return;
+        // Se já tem essa OS no estado, manter a versão mais recente (por timestamp)
+        const existente = OS_EMAIL_STATE[os.n];
+        const recExistente = existente?.recebido || '';
+        const recNovo = d.recebido || '';
+        if (!existente || recNovo > recExistente) {
+          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id, recebido: recNovo };
+          if (typeof STATE !== 'undefined' && STATE[os.n] === undefined) {
+            STATE[os.n] = { status: 'Pendente', resp: '', obs: '', cons_override: '', q_orig: os.q };
+          }
+        }
+      } catch(e) {}
+      carregados++;
+    });
+    console.log(`[email-first] ${carregados} emails do ARGO carregados em OS_EMAIL_STATE`);
+    // Re-renderizar agora que temos os dados
+    if (typeof renderGroups === 'function' && typeof DATA !== 'undefined') {
+      renderGroups();
+      if (typeof atualizarKPIs === 'function') atualizarKPIs();
+    }
+  } catch(err) {
+    console.error('Erro carregando emails do ARGO:', err);
+  }
+}
 
 function iniciarListenerOsEmail() {
+  // Modo email-first: já carregamos todos os emails no boot via carregarTodosOsEmails().
+  // Este listener pega só os NOVOS emails (processado=false) que chegam em tempo real.
   db.collection('os_email')
     .where('processado', '==', false)
     .onSnapshot(snapshot => {
@@ -2527,17 +2721,27 @@ function iniciarListenerOsEmail() {
         const os = parseArgoEmail(d.assunto, d.corpo);
         if (!os.n || !os.hotel) return;
 
-        // ── ANTI-DUPLICATA: verificar se OS já está na planilha ───────────────
-        const osNaplanilha = DATA.some(g => g.os.some(o => o.n === os.n));
+        // ── ATUALIZAR OS_EMAIL_STATE (sempre, em ambos os modos) ─────────────
+        // Manter mais recente se já existir versão anterior
+        const existente = OS_EMAIL_STATE[os.n];
+        const recExistente = existente?.recebido || '';
+        const recNovo = d.recebido || '';
+        if (!existente || recNovo >= recExistente) {
+          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id, recebido: recNovo };
+          if (STATE[os.n] === undefined) {
+            STATE[os.n] = { status: 'Pendente', resp: '', obs: '', cons_override: '', q_orig: os.q };
+          }
+          mudou = true;
+        }
 
+        // ── DETECTAR Cotação→Emissão e resetar status (lógica preservada) ────
+        const osNaplanilha = DATA.some(g => g.os.some(o => o.n === os.n));
         if (osNaplanilha) {
-          // OS já existe na planilha — atualizar q (Cotação→Emissão) se mudou
           for (const g of DATA) {
             const oItem = g.os.find(o => o.n === os.n);
             if (oItem) {
               const qAnterior = STATE[os.n]?.q_orig || oItem.q;
               if (os.q === 'Emissão' && qAnterior === 'Cotação') {
-                // Mudou de etapa via email — resetar status para Pendente
                 if (STATE[os.n]) {
                   STATE[os.n].status = 'Pendente';
                   STATE[os.n].q_orig = 'Emissão';
@@ -2549,21 +2753,14 @@ function iniciarListenerOsEmail() {
               break;
             }
           }
-          // Marcar email como processado no Firestore (já tem na planilha)
-          db.collection('os_email').doc(doc.id)
-            .update({ processado: true })
-            .catch(() => {});
-        } else {
-          // OS não está na planilha — exibir em tempo real
-          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id, recebido: d.recebido || '' };
-          if (STATE[os.n] === undefined) {
-            STATE[os.n] = {
-              status: 'Pendente', resp: '', obs: '',
-              cons_override: '', q_orig: os.q
-            };
-          }
-          mudou = true;
         }
+
+        // ── MARCAR processado=true (necessário para filtro do listener) ───────
+        // No modo email-first, isso significa apenas "painel já viu este email".
+        // OS_EMAIL_STATE retém os dados localmente.
+        db.collection('os_email').doc(doc.id)
+          .update({ processado: true })
+          .catch(() => {});
       });
       if (mudou) {
         atualizarKPIs();
@@ -2854,7 +3051,8 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v61] Fase 0 — auditoria planilha × email do ARGO', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v64] Email-first + status "Cotação hotel" vira "Aguardando escolha"', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof DATA === 'undefined' || !Array.isArray(DATA)) {
     setTimeout(iniciarDashboard, 50);
     return;
@@ -2973,7 +3171,13 @@ function mostrarDashboard() {
   iniciarListenersFirestore();
   iniciarListenerDupTratadas();
   iniciarListenerOsEmail();
-  setTimeout(reprocessarOsEmail, 3000); // reprocessar emails antigos com parser atualizado
+  // Modo email-first: carregar TODOS os emails do ARGO no boot (não só processado=false).
+  // Necessário para OS_EMAIL_STATE conter todas as OS de email, e não só as novas.
+  if (MODO_EMAIL_FIRST) {
+    carregarTodosOsEmails();
+  } else {
+    setTimeout(reprocessarOsEmail, 3000);
+  }
 }
 
 // ── FIRESTORE: listener em tempo real para os_status ─────────────────────────
