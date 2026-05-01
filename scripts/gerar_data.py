@@ -297,13 +297,96 @@ def ler_os_xls(raw_bytes):
     print(f"  ✓ OS lidas: {len(rows)} linhas")
     return rows
 
+def limpar_nome_hotel(hotel_raw, cidade_raw):
+    """
+    Tenta extrair o nome real do hotel quando a consultora preenche o campo
+    com cidade-estado-hotel-endereço junto.
+
+    Exemplos:
+      "SÃO RAIMUNDO NONATO - PIAUI - MEGA EXPRESS HOTEL II - PRACA CEL MILANEZ, SN CIPO"
+        → "MEGA EXPRESS HOTEL II"
+      "Hotel Pousada do Sol, Av Brasil 200, Centro, Recife/PE"
+        → "Hotel Pousada do Sol"
+      "Logic Hoteis Volta Redonda" → "Logic Hoteis Volta Redonda" (sem mudança)
+
+    Estratégia:
+      1) Se tem múltiplos " - " (3+), assumir formato CIDADE-ESTADO-HOTEL-ENDEREÇO
+         e pegar o segmento que tem palavra-chave de hotel (HOTEL/POUSADA/PALACE/etc.)
+      2) Se tem ", " seguido de algo parecido com endereço (RUA, AV, R., etc.),
+         cortar antes do endereço.
+      3) Caso contrário, retorna como está (com strip).
+    """
+    if not hotel_raw or not isinstance(hotel_raw, str):
+        return hotel_raw
+    s = hotel_raw.strip()
+    if not s or s.lower() in ("nan", "none"):
+        return s
+
+    PALAVRAS_HOTEL = {'HOTEL','POUSADA','PALACE','RESORT','PLAZA','INN','SUITE','SUITES',
+                      'FLAT','APART','PARK','LODGE','HOSTEL','MOTEL','HOTEIS','HOTÉIS'}
+
+    def tem_palavra_hotel(seg):
+        # Verifica se o segmento contém uma palavra-chave de hotel
+        seg_up = seg.upper()
+        for p in PALAVRAS_HOTEL:
+            if p in seg_up.split() or p in seg_up:
+                return True
+        return False
+
+    def parece_endereco(seg):
+        # Detecta segmento que começa com RUA, AV, R., ROD., TRAVESSA, PRAÇA etc.
+        # ou que contém número de endereço (SN, S/N, dígitos+vírgula)
+        seg_up = seg.upper().strip()
+        prefixos = ('RUA ','R. ','R, ','AV ','AV. ','AVENIDA ','ROD ','ROD. ',
+                    'RODOVIA ','TRAVESSA ','TRV ','TRV. ','PRACA ','PRAÇA ','PRAC. ',
+                    'AL. ','ALAMEDA ','LARGO ','BR-','BR ','PCA ','PÇA ')
+        if any(seg_up.startswith(p) for p in prefixos):
+            return True
+        # contém "SN", "S/N", número de CEP
+        if re.search(r'\b(SN|S/N|S\.N\.?)\b', seg_up):
+            return True
+        if re.search(r'\d{2}\.?\d{3}-?\d{3}', seg_up):  # CEP
+            return True
+        return False
+
+    # Normalizar separadores: troca múltiplos espaços, padroniza " - "
+    s_norm = re.sub(r'\s+', ' ', s)
+
+    # Estratégia 1: split por " - "
+    if s_norm.count(' - ') >= 2:
+        partes = [p.strip() for p in s_norm.split(' - ') if p.strip()]
+        # Procurar segmento com palavra-chave de hotel, NÃO sendo endereço
+        candidatos = [p for p in partes if tem_palavra_hotel(p) and not parece_endereco(p)]
+        if candidatos:
+            # Pega o primeiro candidato (geralmente o nome do hotel vem antes do endereço)
+            return candidatos[0].strip()
+
+    # Estratégia 2: split por vírgula — cortar antes do primeiro segmento que parece endereço
+    if ',' in s_norm:
+        partes = [p.strip() for p in s_norm.split(',')]
+        # Achar índice do primeiro segmento que parece endereço
+        idx_endereco = None
+        for i, p in enumerate(partes):
+            if parece_endereco(p):
+                idx_endereco = i
+                break
+        if idx_endereco is not None and idx_endereco > 0:
+            return ', '.join(partes[:idx_endereco]).strip()
+
+    return s_norm
+
+
 def processar(os_rows, sourcing, hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento):
     grupos = defaultdict(list)
     for r in os_rows:
-        hotel  = str(r.get("NOME DO HOTEL", "")).strip()
+        hotel_raw = str(r.get("NOME DO HOTEL", "")).strip()
         cidade = str(r.get("CIDADE", "")).strip()
-        if not hotel or hotel.lower() in ("nan", "none", ""):
+        if not hotel_raw or hotel_raw.lower() in ("nan", "none", ""):
             hotel = "Sem nome"
+        else:
+            hotel = limpar_nome_hotel(hotel_raw, cidade)
+            if not hotel:
+                hotel = "Sem nome"
         if not cidade or cidade.lower() in ("nan", "none", ""):
             cidade = ""
         key = (hotel, cidade)
