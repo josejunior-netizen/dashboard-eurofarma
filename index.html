@@ -2812,32 +2812,102 @@ const MODO_EMAIL_FIRST = true;
 // OS_EMAIL_STATE no boot. Roda 1x ao iniciar dashboard. Necessário no modo
 // email-first porque o listener .where('processado','==',false) só pega emails
 // novos — emails antigos (já processados) também precisam estar no estado.
+// Cache do snapshot de os_email no localStorage por usuário.
+// Reduz reads no Firestore ao reabrir/refresh o painel rapidamente.
+// TTL: 10 minutos. Listener em tempo real continua trazendo emails novos.
+const EMAILS_CACHE_KEY = 'ef_os_email_cache_v1';
+const EMAILS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
+
+function lerCacheEmails() {
+  try {
+    const raw = localStorage.getItem(EMAILS_CACHE_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (!o || !o.ts || !o.dados) return null;
+    if (Date.now() - o.ts > EMAILS_CACHE_TTL_MS) return null; // expirado
+    return o; // { ts, dados: [{id, assunto, corpo, recebido, processado}, ...] }
+  } catch(e) { return null; }
+}
+
+function gravarCacheEmails(dados) {
+  try {
+    localStorage.setItem(EMAILS_CACHE_KEY, JSON.stringify({
+      ts: Date.now(),
+      dados: dados
+    }));
+  } catch(e) {
+    // localStorage pode estourar quota — ignora silenciosamente
+    try { localStorage.removeItem(EMAILS_CACHE_KEY); } catch(e2) {}
+  }
+}
+
+function processarEmailsParaState(dados) {
+  // Recebe array de docs e popula OS_EMAIL_STATE — função extraída pra reutilizar
+  // Filtra OS já finalizadas (presentes em OS_FINALIZADAS, vinda do data.js)
+  let processados = 0;
+  let filtrados = 0;
+  const finalizadas = (typeof OS_FINALIZADAS !== 'undefined') ? OS_FINALIZADAS : null;
+  for (const d of dados) {
+    if (!d.assunto || !d.corpo) continue;
+    try {
+      const os = parseArgoEmail(d.assunto, d.corpo);
+      if (!os.n || !os.hotel) continue;
+      // Se OS já está no histórico de reservas finalizadas, pular
+      if (finalizadas && finalizadas.has(os.n)) {
+        filtrados++;
+        continue;
+      }
+      const existente = OS_EMAIL_STATE[os.n];
+      const recExistente = existente?.recebido || '';
+      const recNovo = d.recebido || '';
+      if (!existente || recNovo > recExistente) {
+        OS_EMAIL_STATE[os.n] = { ...os, firestoreId: d.id, recebido: recNovo };
+        if (typeof STATE !== 'undefined' && STATE[os.n] === undefined) {
+          STATE[os.n] = { status: 'Pendente', resp: '', obs: '', cons_override: '', q_orig: os.q };
+        }
+      }
+      processados++;
+    } catch(e) {}
+  }
+  if (filtrados > 0) {
+    console.log(`[email-first] ${filtrados} emails ignorados (OS já finalizada no histórico)`);
+  }
+  return processados;
+}
+
 async function carregarTodosOsEmails() {
   if (typeof db === 'undefined') return;
+
+  // 1) Tentar cache primeiro (zero reads no Firestore)
+  const cache = lerCacheEmails();
+  if (cache && Array.isArray(cache.dados)) {
+    const processados = processarEmailsParaState(cache.dados);
+    const idadeMin = Math.round((Date.now() - cache.ts) / 60000);
+    console.log(`%c[cache] ${processados} emails carregados do cache local (${idadeMin}min atrás) — economizou ~${cache.dados.length} reads`, 'color:#0a7;font-weight:bold');
+    if (typeof renderGroups === 'function' && typeof DATA !== 'undefined') {
+      renderGroups();
+      if (typeof atualizarKPIs === 'function') atualizarKPIs();
+    }
+    return;
+  }
+
+  // 2) Cache vazio/expirado — buscar do Firestore
   try {
     const snap = await db.collection('os_email').get();
-    let carregados = 0;
+    const dados = [];
     snap.forEach(doc => {
       const d = doc.data();
-      if (!d.assunto || !d.corpo) return;
-      try {
-        const os = parseArgoEmail(d.assunto, d.corpo);
-        if (!os.n || !os.hotel) return;
-        // Se já tem essa OS no estado, manter a versão mais recente (por timestamp)
-        const existente = OS_EMAIL_STATE[os.n];
-        const recExistente = existente?.recebido || '';
-        const recNovo = d.recebido || '';
-        if (!existente || recNovo > recExistente) {
-          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id, recebido: recNovo };
-          if (typeof STATE !== 'undefined' && STATE[os.n] === undefined) {
-            STATE[os.n] = { status: 'Pendente', resp: '', obs: '', cons_override: '', q_orig: os.q };
-          }
-        }
-      } catch(e) {}
-      carregados++;
+      dados.push({
+        id: doc.id,
+        assunto: d.assunto || '',
+        corpo: d.corpo || '',
+        recebido: d.recebido || '',
+        processado: d.processado || false
+      });
     });
-    console.log(`[email-first] ${carregados} emails do ARGO carregados em OS_EMAIL_STATE`);
-    // Re-renderizar agora que temos os dados
+    gravarCacheEmails(dados);
+    const processados = processarEmailsParaState(dados);
+    console.log(`[email-first] ${processados} emails do ARGO carregados do Firestore (${dados.length} reads — cache atualizado)`);
     if (typeof renderGroups === 'function' && typeof DATA !== 'undefined') {
       renderGroups();
       if (typeof atualizarKPIs === 'function') atualizarKPIs();
@@ -2860,6 +2930,16 @@ function iniciarListenerOsEmail() {
         if (!d.assunto || !d.corpo) return;
         const os = parseArgoEmail(d.assunto, d.corpo);
         if (!os.n || !os.hotel) return;
+
+        // Se OS já está no histórico de reservas finalizadas, ignora — ela não
+        // deveria mais aparecer no painel. Marca como processado pra parar de aparecer
+        // como pendente nos próximos snapshots.
+        if (typeof OS_FINALIZADAS !== 'undefined' && OS_FINALIZADAS.has(os.n)) {
+          db.collection('os_email').doc(doc.id)
+            .update({ processado: true })
+            .catch(() => {});
+          return;
+        }
 
         // ── ATUALIZAR OS_EMAIL_STATE (sempre, em ambos os modos) ─────────────
         // Manter mais recente se já existir versão anterior
@@ -3204,8 +3284,11 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v66] aba Consultor soma email + divergências detalhadas com filtro', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v67] OS já finalizadas no histórico são removidas + cache de emails', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
+  if (typeof OS_FINALIZADAS !== 'undefined') {
+    console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
+  }
   if (typeof DATA === 'undefined' || !Array.isArray(DATA)) {
     setTimeout(iniciarDashboard, 50);
     return;
