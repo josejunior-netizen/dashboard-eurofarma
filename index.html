@@ -2315,6 +2315,7 @@ function renderAuditoriaComDados(c, emailCompleto) {
         quando faltam no email (esperado — fluxo do Power Automate começou em ${dataCorteStr}).
         <button onclick="exportarAuditoriaCSV()" style="margin-left:12px;padding:4px 10px;background:#fff;border:1px solid #F59E0B;border-radius:4px;color:#92400E;cursor:pointer;font-weight:600">📥 Exportar CSV</button>
         <button onclick="reprocessarTipoEvento()" style="margin-left:8px;padding:4px 10px;background:#fff;border:1px solid #1E40AF;border-radius:4px;color:#1E40AF;cursor:pointer;font-weight:600" title="Adiciona tipo_evento aos emails antigos do Firestore (calculado pelo assunto)">🔄 Reprocessar tipo_evento</button>
+        <button onclick="limparOsOrfas()" style="margin-left:8px;padding:4px 10px;background:#fff;border:1px solid #DC2626;border-radius:4px;color:#DC2626;cursor:pointer;font-weight:600" title="Remove OS antigas que estão no email mas sumiram da planilha (provavelmente canceladas em data anterior à captura de email Cancelamento)">🧹 Limpar OS órfãs</button>
       </div>
     </div>
   `;
@@ -2527,6 +2528,151 @@ window.verEmailDetalhe = function(firestoreId) {
   }).catch(err => {
     overlay.querySelector('div > div:last-child').innerHTML = `<div style="color:var(--red)">Erro: ${err.message}</div>`;
   });
+};
+
+// Limpa OS órfãs: emails antigos no Firestore que não estão na planilha do ARGO.
+// Provavelmente são OS canceladas antes da configuração do email "Cancelamento"
+// (data anterior a 04/05/2026). Mostra preview com confirmação dupla antes de deletar.
+window.limparOsOrfas = async function() {
+  // Garantia de autorização
+  const user = (typeof auth !== 'undefined' && auth.currentUser) ? auth.currentUser : null;
+  const email = user && user.email ? user.email.toLowerCase() : '';
+  if (typeof AUDITORIA_AUTORIZADOS !== 'undefined' && !AUDITORIA_AUTORIZADOS.includes(email)) {
+    alert('Acesso restrito.');
+    return;
+  }
+
+  console.log('[limpar-orfas] iniciando análise…');
+
+  // 1) Identificar OS na planilha (DATA)
+  const osNaPlanilha = new Set();
+  DATA.forEach(g => g.os.forEach(o => osNaPlanilha.add(o.n)));
+
+  // 2) Cutoff: 24h atrás
+  const agora = Date.now();
+  const cutoffMs = 24 * 60 * 60 * 1000; // 24h
+
+  // 3) Identificar candidatos: OS no Firestore que NÃO estão na planilha + email > 24h
+  const candidatos = [];
+  try {
+    const snap = await db.collection('os_email').get();
+    snap.forEach(doc => {
+      const d = doc.data();
+      if (!d.assunto || !d.corpo) return;
+
+      // Pula OS canceladas/emitidas (já são tratadas pelo fluxo automático)
+      if (d.tipo_evento === 'cancelada' || d.tipo_evento === 'emitida') return;
+
+      try {
+        const os = parseArgoEmail(d.assunto, d.corpo);
+        if (!os.n) return;
+
+        // Critério 1: NÃO está na planilha
+        if (osNaPlanilha.has(os.n)) return;
+
+        // Critério 2: email tem mais de 24h
+        const recebidoStr = d.recebido || '';
+        if (!recebidoStr) return; // sem timestamp, pula por segurança
+        const recebidoMs = Date.parse(recebidoStr);
+        if (isNaN(recebidoMs)) return;
+        if ((agora - recebidoMs) < cutoffMs) return;
+
+        // É órfã
+        candidatos.push({
+          docId: doc.id,
+          n: os.n,
+          hotel: os.hotel,
+          cidade: os.cidade,
+          cons: os.cons,
+          q: os.q,
+          recebido: recebidoStr,
+          tipo_evento: d.tipo_evento || ''
+        });
+      } catch(e) {}
+    });
+  } catch(err) {
+    console.error('[limpar-orfas] erro lendo Firestore:', err);
+    alert('Erro ao ler emails: ' + err.message);
+    return;
+  }
+
+  // 4) Se nada encontrado
+  if (candidatos.length === 0) {
+    alert('✅ Nenhuma OS órfã encontrada.\n\nTodas as OS de email ou estão na planilha, ou foram canceladas/emitidas, ou têm menos de 24h.');
+    return;
+  }
+
+  // 5) Mostrar preview e pedir confirmação
+  candidatos.sort((a, b) => a.n - b.n);
+  const previewLista = candidatos.slice(0, 30).map(c =>
+    `#${c.n} — ${c.hotel || '?'} (${c.cidade || '?'}) — ${c.cons || '?'} — ${c.recebido.substring(0, 16).replace('T', ' ')} — tipo: ${c.tipo_evento || 'n/a'}`
+  ).join('\n');
+  const maisQue30 = candidatos.length > 30 ? `\n\n... e mais ${candidatos.length - 30} OS` : '';
+
+  if (!confirm(
+    `🧹 LIMPEZA DE OS ÓRFÃS\n\n` +
+    `Encontradas ${candidatos.length} OS órfãs:\n` +
+    `• Não estão na planilha do ARGO atual\n` +
+    `• Email tem mais de 24h\n` +
+    `• Não estão marcadas como canceladas/emitidas\n\n` +
+    `LISTA:\n${previewLista}${maisQue30}\n\n` +
+    `⚠️ Esta ação vai DELETAR esses ${candidatos.length} documentos do Firestore.\n` +
+    `Eles vão sumir do painel imediatamente.\n` +
+    `\nEsta ação NÃO PODE SER DESFEITA.\n\n` +
+    `Continuar?`
+  )) {
+    console.log('[limpar-orfas] cancelado pelo usuário');
+    return;
+  }
+
+  // 6) Confirmação dupla
+  if (!confirm(
+    `⚠️ ÚLTIMA CONFIRMAÇÃO\n\n` +
+    `Você tem CERTEZA que quer deletar ${candidatos.length} documentos do Firestore?\n\n` +
+    `Tem certeza absoluta?`
+  )) {
+    console.log('[limpar-orfas] cancelado na confirmação dupla');
+    return;
+  }
+
+  // 7) Executar deleção em lotes
+  console.log(`[limpar-orfas] deletando ${candidatos.length} documentos…`);
+  const start = Date.now();
+  let deletados = 0;
+  let erros = 0;
+
+  for (let i = 0; i < candidatos.length; i += 50) {
+    const lote = candidatos.slice(i, i + 50);
+    await Promise.all(lote.map(async c => {
+      try {
+        await db.collection('os_email').doc(c.docId).delete();
+        delete OS_EMAIL_STATE[c.n];
+        deletados++;
+      } catch(e) {
+        erros++;
+        console.error('[limpar-orfas] erro deletando', c.docId, e);
+      }
+    }));
+    if ((i + 50) < candidatos.length) {
+      console.log(`[limpar-orfas] progresso: ${Math.min(i+50, candidatos.length)}/${candidatos.length}`);
+    }
+  }
+
+  // 8) Limpar cache local pra próximo boot ler tudo limpo
+  try { localStorage.removeItem('ef_os_email_cache_v1'); } catch(e) {}
+
+  // 9) Re-renderizar painel
+  if (typeof renderGroups === 'function') renderGroups();
+  if (typeof atualizarKPIs === 'function') atualizarKPIs();
+
+  const duracao = Math.round((Date.now() - start) / 1000);
+  console.log(`[limpar-orfas] concluído em ${duracao}s — ${deletados} deletados, ${erros} erros`);
+  alert(
+    `✅ Limpeza concluída em ${duracao}s\n\n` +
+    `Deletados: ${deletados}\n` +
+    `Erros: ${erros}\n\n` +
+    `Painel já foi atualizado. As OS órfãs sumiram.`
+  );
 };
 
 // Calcula tipo_evento a partir do assunto (mesma lógica do Power Automate)
@@ -3500,7 +3646,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v72] cancelada + botão reprocessar tipo_evento (auditoria)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v73] botão Limpar OS órfãs (auditoria) — para legado pré-cancelamento', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
