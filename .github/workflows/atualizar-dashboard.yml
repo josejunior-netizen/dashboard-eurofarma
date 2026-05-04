@@ -23,12 +23,19 @@ concurrency:
   group: atualizar-dashboard
   cancel-in-progress: true
 
+# Permissão explícita para o bot fazer commit/push no repo
+permissions:
+  contents: write
+
 jobs:
   atualizar:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4
+        with:
+          # Necessário para git pull --rebase funcionar (precisa do histórico)
+          fetch-depth: 0
 
       - name: Instalar Python
         uses: actions/setup-python@v5
@@ -72,5 +79,22 @@ jobs:
           else
             TIMESTAMP=$(TZ='America/Sao_Paulo' date '+%d/%m/%Y %H:%M')
             git commit -m "dados: atualização automática ${TIMESTAMP}"
-            git push
+
+            # Tenta o push até 3 vezes, fazendo pull --rebase entre tentativas.
+            # Resolve race condition entre commits manuais e o cron automático.
+            for i in 1 2 3; do
+              echo "Tentativa de push $i/3..."
+              if git push; then
+                echo "Push bem-sucedido na tentativa $i"
+                exit 0
+              fi
+              echo "Push falhou. Fazendo pull --rebase e tentando novamente..."
+              git pull --rebase origin main || {
+                echo "Pull --rebase falhou. Abortando."
+                exit 1
+              }
+            done
+
+            echo "ERRO: 3 tentativas de push falharam"
+            exit 1
           fi
