@@ -967,7 +967,7 @@ function getFiltered(dataOverride) {
     if (filterMulti && !g.mc) return false;
     // Esconder grupo se todas as OS estão concluídas OU finalizadas no ARGO
     if (g.os.length > 0 && g.os.every(o =>
-      (STATE[o.n] && STATE[o.n].status === 'Sim') || osEstaFinalizada(o.n)
+      (STATE[o.n] && STATE[o.n].status === 'Sim') || osEstaOculta(o.n)
     )) return false;
     return true;
   });
@@ -1221,7 +1221,7 @@ function renderGroups() {
       return (st && st.cons_override) || normCons(o.cons) || '';
     }).filter(Boolean))];
 
-    const osRows = g.os.filter(o => STATE[o.n]?.status !== 'Sim' && !osEstaFinalizada(o.n)).map(o => {
+    const osRows = g.os.filter(o => STATE[o.n]?.status !== 'Sim' && !osEstaOculta(o.n)).map(o => {
       const st = STATE[o.n] || { status:'Pendente', resp:'', obs:'', cons_override:'' };
       const sMap = {'Pendente':'s-pend','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
       const consAtual = st.cons_override || normCons(o.cons) || '';
@@ -1315,7 +1315,7 @@ function renderGroups() {
     const urgGrupo = getUrgenciaGrupo(g);
     const consSet = [...new Set(g.os.map(o => normCons(o.cons)))];
 
-    const osRows = g.os.filter(o => STATE[o.n].status !== 'Sim' && !osEstaFinalizada(o.n)).map(o => {
+    const osRows = g.os.filter(o => STATE[o.n].status !== 'Sim' && !osEstaOculta(o.n)).map(o => {
       const st = STATE[o.n];
       const done = st.status==='Sim';
       const sMap={'Pendente':'s-pend','Cotação hotel':'s-cot','Ag. confirmação':'s-emi',};
@@ -1567,27 +1567,27 @@ function updateProgressChart(){
 function updateCharts(){updateProgressChart();}
 function atualizarKPIs() {
   if(typeof DATA === 'undefined' || !DATA.length) return;
-  const totalOS   = DATA.reduce((s,g)=>s+g.os.filter(o=>!osEstaFinalizada(o.n)).length,0);
+  const totalOS   = DATA.reduce((s,g)=>s+g.os.filter(o=>!osEstaOculta(o.n)).length,0);
   const n_accord  = DATA.filter(g=>g.tipo==='acordo').length;
   const n_hist    = DATA.filter(g=>g.tipo==='historico').length;
   const n_sem     = DATA.filter(g=>g.tipo==='sem_ref').length;
   const n_div     = DATA.filter(g=>g.tipo==='div').length;
-  const n_cot     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Cotação' && !osEstaFinalizada(o.n)).length,0);
-  const n_emi     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Emissão' && !osEstaFinalizada(o.n)).length,0);
+  const n_cot     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Cotação' && !osEstaOculta(o.n)).length,0);
+  const n_emi     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Emissão' && !osEstaOculta(o.n)).length,0);
   // OS com status "Cotação hotel" deixam de contar como "Ag. Cotação" e viram "Aguardando escolha".
   // Isso só se aplica a OS do tipo Cotação (Emissão fica como está).
   const n_agEscolha = DATA.reduce((s,g)=>s+g.os.filter(o=>
-    o.q==='Cotação' && (STATE[o.n]?.status === 'Cotação hotel') && !osEstaFinalizada(o.n)
+    o.q==='Cotação' && (STATE[o.n]?.status === 'Cotação hotel') && !osEstaOculta(o.n)
   ).length,0);
   const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
   // Somar OS de email nos KPIs (também filtra finalizadas)
   const nEmail = typeof contarOsEmail === 'function' ? contarOsEmail() : 0;
-  const emailCot = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Cotação'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))&&!osEstaFinalizada(os.n)).length;
-  const emailEmi = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Emissão'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))&&!osEstaFinalizada(os.n)).length;
+  const emailCot = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Cotação'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))&&!osEstaOculta(os.n)).length;
+  const emailEmi = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Emissão'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))&&!osEstaOculta(os.n)).length;
   // Email pode ter OS já marcadas como "Cotação hotel" também
   const emailAgEscolha = Object.values(OS_EMAIL_STATE||{}).filter(os=>
     os.q==='Cotação' && (STATE[os.n]?.status === 'Cotação hotel') &&
-    !DATA.some(g=>g.os.some(o=>o.n===os.n)) && !osEstaFinalizada(os.n)
+    !DATA.some(g=>g.os.some(o=>o.n===os.n)) && !osEstaOculta(os.n)
   ).length;
   set('kpiTotalOS',     totalOS + nEmail);
   set('kpiTotalGrupos', DATA.length + ' grupos hotel+cidade' + (nEmail > 0 ? ` · 📧 ${nEmail} por email` : ''));
@@ -2658,18 +2658,27 @@ function parseArgoEmail(assunto, corpoHtml) {
 
   // Status
   // Status: verificar assunto primeiro, depois corpo para emails encaminhados
-  // O assunto do encaminhamento pode não ter o status correto
-  const temEmissaoAssunto = /emiss/i.test(assunto);
+  // Tipos do ARGO:
+  //   "Aguardando Cotação" → q='Cotação' (precisa cotar)
+  //   "Aguardando Escolha" → q='Cotação' (já cotado, cliente vai escolher) ← bugava antes
+  //   "Aguardando Emissão" → q='Emissão' (cotação aprovada, emitir)
+  //   "Emitida"            → q='Emissão' (já emitida; será filtrada por tipo_evento='emitida')
+  const temEscolhaAssunto = /aguardando\s+escolha/i.test(assunto);
+  const temEscolhaCorpo = /Aguardando Escolha/i.test(corpo);
+  const temEmissaoAssunto = /emiss/i.test(assunto) && !/aguardando\s+emiss/i.test(assunto) ? false : /emiss|emitida/i.test(assunto);
   const temCotacaoAssunto = /cota[cç]/i.test(assunto);
-  if (temEmissaoAssunto && !temCotacaoAssunto) {
+  if (temEscolhaAssunto || temEscolhaCorpo) {
+    // "Aguardando Escolha" sempre é Cotação (cotação concluída, cliente escolhe)
+    r.q = 'Cota\u00e7\u00e3o';
+  } else if (temEmissaoAssunto && !temCotacaoAssunto) {
     r.q = 'Emiss\u00e3o';
   } else if (temCotacaoAssunto && !temEmissaoAssunto) {
     r.q = 'Cota\u00e7\u00e3o';
   } else {
     // Ambíguos ou ENC: — verificar no corpo do email (assunto original)
-    const temEmissaoCorpo = /Aguardando Emiss/i.test(corpo);
+    const temEmissaoCorpo = /Aguardando Emiss|foi emitida/i.test(corpo);
     const temCotacaoCorpo = /Aguardando Cota/i.test(corpo);
-    r.q = temEmissaoCorpo ? 'Emiss\u00e3o' : temCotacaoCorpo ? 'Cota\u00e7\u00e3o' : 'Emiss\u00e3o';
+    r.q = temEmissaoCorpo ? 'Emiss\u00e3o' : temCotacaoCorpo ? 'Cota\u00e7\u00e3o' : 'Cota\u00e7\u00e3o';
   }
 
   // Hóspede
@@ -2849,6 +2858,11 @@ function gravarCacheEmails(dados) {
 // Como esse vem em tempo real, OS some do painel imediatamente quando ARGO emite.
 const OS_FINALIZADAS_RUNTIME = new Set();
 
+// Set runtime de OS em "Aguardando Escolha" (cliente vai escolher hotel).
+// Diferente do OS_FINALIZADAS_RUNTIME — esta é TEMPORÁRIA: a OS pode voltar
+// quando chegar email "Aguardando Emissão" (cliente escolheu, hora de emitir).
+const OS_AGUARDANDO_ESCOLHA = new Set();
+
 // Verifica se OS está finalizada (em qualquer das duas fontes)
 function osEstaFinalizada(n) {
   if (typeof OS_FINALIZADAS !== 'undefined' && OS_FINALIZADAS.has(n)) return true;
@@ -2856,35 +2870,51 @@ function osEstaFinalizada(n) {
   return false;
 }
 
+// Verifica se OS deve estar oculta do painel (finalizada OU aguardando escolha).
+// "Oculta" significa "fora da fila do consultor" — pode voltar (Aguardando Escolha)
+// ou ser permanente (Emitida).
+function osEstaOculta(n) {
+  return osEstaFinalizada(n) || OS_AGUARDANDO_ESCOLHA.has(n);
+}
+
 function processarEmailsParaState(dados) {
   // Recebe array de docs e popula OS_EMAIL_STATE — função extraída pra reutilizar
-  // Filtra OS já finalizadas (presentes em OS_FINALIZADAS, vinda do data.js)
-  // Processa tipo_evento de cada email:
-  //   - "emitida"            → adiciona ao set runtime (OS some do painel)
-  //   - "aguardando_escolha" → marca status = "Cotação hotel" (uma vez, sem sobrescrever escolha do consultor)
-  //   - "cotacao"/"emissao"  → comportamento normal (popula OS_EMAIL_STATE)
+  // Trata cada tipo_evento:
+  //   "emitida"            → adiciona a OS_FINALIZADAS_RUNTIME (some definitivo)
+  //   "aguardando_escolha" → adiciona a OS_AGUARDANDO_ESCOLHA (some temporário; pode voltar)
+  //   "emissao"            → REMOVE de OS_AGUARDANDO_ESCOLHA (cliente escolheu, OS volta)
+  //                          + popula OS_EMAIL_STATE com q='Emissão'
+  //   "cotacao"            → popula OS_EMAIL_STATE normalmente
   let processados = 0;
   let filtrados = 0;
   let finalizadas_email = 0;
-  let escolha_marcadas = 0;
+  let escolhas_marcadas = 0;
+  let voltas_emissao = 0;
   const finalizadas = (typeof OS_FINALIZADAS !== 'undefined') ? OS_FINALIZADAS : null;
 
-  for (const d of dados) {
+  // IMPORTANTE: ordenar por timestamp pra processar em ordem cronológica.
+  // Email mais NOVO sobrepõe mais velho (ex: chegou "Aguardando Escolha" e depois
+  // "Aguardando Emissão" — temos que processar nessa ordem pra OS voltar correto).
+  const dadosOrdenados = [...dados].sort((a, b) => (a.recebido || '').localeCompare(b.recebido || ''));
+
+  for (const d of dadosOrdenados) {
     if (!d.assunto || !d.corpo) continue;
     try {
       const os = parseArgoEmail(d.assunto, d.corpo);
       if (!os.n || !os.hotel) continue;
-      const tipoEvento = d.tipo_evento || ''; // pode ser '' em emails antigos
+      const tipoEvento = d.tipo_evento || '';
 
-      // ── EMAIL "Emitida": OS finalizada, remover do painel ─────────────
-      if (tipoEvento === 'emitida') {
+      // ── EMAIL "Emitida" ou "Cancelada": OS finalizada, remover do painel ─
+      // Ambos são definitivos: emitida = reserva confirmada, cancelada = trecho cancelado
+      if (tipoEvento === 'emitida' || tipoEvento === 'cancelada') {
         OS_FINALIZADAS_RUNTIME.add(os.n);
-        delete OS_EMAIL_STATE[os.n]; // remove se estava aparecendo só pelo email
+        OS_AGUARDANDO_ESCOLHA.delete(os.n); // se estava aguardando escolha, agora é definitivo
+        delete OS_EMAIL_STATE[os.n];
         finalizadas_email++;
         continue;
       }
 
-      // Se OS já está no histórico de reservas finalizadas (planilha ou runtime), pular
+      // Se OS já está finalizada definitivamente (planilha ou runtime), pular
       if (finalizadas && finalizadas.has(os.n)) {
         filtrados++;
         continue;
@@ -2894,30 +2924,24 @@ function processarEmailsParaState(dados) {
         continue;
       }
 
-      // ── EMAIL "Aguardando Escolha": consultor já cotou, cliente vai escolher ─
-      // Marcar status="Cotação hotel" (vira "Aguardando escolha" no badge visual).
-      // SÓ se o consultor ainda não tocou (status="Pendente") — evita sobrescrever
-      // decisão manual posterior do consultor.
+      // ── EMAIL "Aguardando Escolha": OS sai temporariamente da fila ─────
       if (tipoEvento === 'aguardando_escolha') {
-        if (typeof STATE !== 'undefined') {
-          if (STATE[os.n] === undefined) {
-            STATE[os.n] = { status: 'Cotação hotel', resp: '', obs: '', cons_override: '', q_orig: os.q };
-            escolha_marcadas++;
-          } else if (STATE[os.n].status === 'Pendente') {
-            STATE[os.n].status = 'Cotação hotel';
-            // Persistir no Firestore pra que recarregar o painel mantenha
-            if (typeof db !== 'undefined') {
-              db.collection('os_status').doc(String(os.n))
-                .set({ status: 'Cotação hotel' }, { merge: true })
-                .catch(() => {});
-            }
-            escolha_marcadas++;
-          }
-        }
-        // Continua para popular OS_EMAIL_STATE com os dados atuais do email
+        OS_AGUARDANDO_ESCOLHA.add(os.n);
+        delete OS_EMAIL_STATE[os.n]; // remove se estava no estado
+        escolhas_marcadas++;
+        continue;
       }
 
-      // ── Demais tipos: popular OS_EMAIL_STATE normalmente ──────────────
+      // ── EMAIL "Aguardando Emissão": cliente escolheu, OS volta como Emissão ─
+      if (tipoEvento === 'emissao') {
+        if (OS_AGUARDANDO_ESCOLHA.has(os.n)) {
+          OS_AGUARDANDO_ESCOLHA.delete(os.n);
+          voltas_emissao++;
+        }
+        // continua para popular OS_EMAIL_STATE com q='Emissão'
+      }
+
+      // ── Demais tipos (cotacao, emissao após escolha): popular OS_EMAIL_STATE ─
       const existente = OS_EMAIL_STATE[os.n];
       const recExistente = existente?.recebido || '';
       const recNovo = d.recebido || '';
@@ -2933,7 +2957,8 @@ function processarEmailsParaState(dados) {
 
   if (filtrados > 0) console.log(`[email-first] ${filtrados} emails ignorados (OS já finalizada)`);
   if (finalizadas_email > 0) console.log(`%c[email-first] ${finalizadas_email} OS marcadas como FINALIZADAS via email "Emitida"`, 'color:#0a7;font-weight:bold');
-  if (escolha_marcadas > 0) console.log(`%c[email-first] ${escolha_marcadas} OS marcadas como "Aguardando escolha" via email`, 'color:#1E40AF;font-weight:bold');
+  if (escolhas_marcadas > 0) console.log(`%c[email-first] ${escolhas_marcadas} OS em AGUARDANDO ESCOLHA — temporariamente fora da fila`, 'color:#1E40AF;font-weight:bold');
+  if (voltas_emissao > 0) console.log(`%c[email-first] ${voltas_emissao} OS voltaram (Aguardando Escolha → Aguardando Emissão)`, 'color:#0a7;font-weight:bold');
   return processados;
 }
 
@@ -2995,11 +3020,11 @@ function iniciarListenerOsEmail() {
         if (!os.n || !os.hotel) return;
         const tipoEvento = d.tipo_evento || '';
 
-        // ── EMAIL "Emitida": OS finalizada no ARGO ─────────────────────
-        // Adiciona ao runtime set, remove do OS_EMAIL_STATE se estava lá,
-        // e marca o email como processado. OS some do painel imediatamente.
-        if (tipoEvento === 'emitida') {
+        // ── EMAIL "Emitida" ou "Cancelada": OS finalizada no ARGO ─────────
+        // Ambos definitivos: emitida = confirmada, cancelada = trecho cancelado.
+        if (tipoEvento === 'emitida' || tipoEvento === 'cancelada') {
           OS_FINALIZADAS_RUNTIME.add(os.n);
+          OS_AGUARDANDO_ESCOLHA.delete(os.n);
           delete OS_EMAIL_STATE[os.n];
           db.collection('os_email').doc(doc.id)
             .update({ processado: true })
@@ -3008,7 +3033,7 @@ function iniciarListenerOsEmail() {
           return;
         }
 
-        // Se OS já está no histórico de reservas finalizadas, ignora.
+        // Se OS já está finalizada definitivamente, ignora.
         if (osEstaFinalizada(os.n)) {
           db.collection('os_email').doc(doc.id)
             .update({ processado: true })
@@ -3016,19 +3041,23 @@ function iniciarListenerOsEmail() {
           return;
         }
 
-        // ── EMAIL "Aguardando Escolha": auto-marca status="Cotação hotel" ─
-        // Só se status atual = "Pendente" (não sobrescreve escolha do consultor)
+        // ── EMAIL "Aguardando Escolha": OS sai temporariamente da fila ─────
+        // Adiciona ao set OS_AGUARDANDO_ESCOLHA. Pode voltar se chegar
+        // "Aguardando Emissão" depois (cliente escolheu, hora de emitir).
         if (tipoEvento === 'aguardando_escolha') {
-          const stAtual = STATE[os.n]?.status || '';
-          if (!stAtual || stAtual === 'Pendente') {
-            if (!STATE[os.n]) STATE[os.n] = { status: 'Cotação hotel', resp: '', obs: '', cons_override: '', q_orig: os.q };
-            else STATE[os.n].status = 'Cotação hotel';
-            db.collection('os_status').doc(String(os.n))
-              .set({ status: 'Cotação hotel' }, { merge: true })
-              .catch(() => {});
-            mudou = true;
-          }
-          // Continua para popular OS_EMAIL_STATE com dados atuais
+          OS_AGUARDANDO_ESCOLHA.add(os.n);
+          delete OS_EMAIL_STATE[os.n];
+          db.collection('os_email').doc(doc.id)
+            .update({ processado: true })
+            .catch(() => {});
+          mudou = true;
+          return;
+        }
+
+        // ── EMAIL "Aguardando Emissão": cliente escolheu, OS volta ─────────
+        if (tipoEvento === 'emissao' && OS_AGUARDANDO_ESCOLHA.has(os.n)) {
+          OS_AGUARDANDO_ESCOLHA.delete(os.n);
+          // continua pra popular OS_EMAIL_STATE com q='Emissão'
         }
 
         // ── ATUALIZAR OS_EMAIL_STATE (sempre, em ambos os modos) ─────────────
@@ -3374,7 +3403,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v68] tipo_evento: emails Emitida finalizam OS, Aguardando Escolha auto-marca status', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v71] suporte a tipo_evento=cancelada (remove OS igual a Emitida)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
