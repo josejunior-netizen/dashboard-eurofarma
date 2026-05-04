@@ -965,7 +965,10 @@ function getFiltered(dataOverride) {
       if (!hay.includes(search)) return false;
     }
     if (filterMulti && !g.mc) return false;
-    if (g.os.length > 0 && g.os.every(o => STATE[o.n] && STATE[o.n].status === 'Sim')) return false;
+    // Esconder grupo se todas as OS estão concluídas OU finalizadas no ARGO
+    if (g.os.length > 0 && g.os.every(o =>
+      (STATE[o.n] && STATE[o.n].status === 'Sim') || osEstaFinalizada(o.n)
+    )) return false;
     return true;
   });
 }
@@ -1218,7 +1221,7 @@ function renderGroups() {
       return (st && st.cons_override) || normCons(o.cons) || '';
     }).filter(Boolean))];
 
-    const osRows = g.os.filter(o => STATE[o.n]?.status !== 'Sim').map(o => {
+    const osRows = g.os.filter(o => STATE[o.n]?.status !== 'Sim' && !osEstaFinalizada(o.n)).map(o => {
       const st = STATE[o.n] || { status:'Pendente', resp:'', obs:'', cons_override:'' };
       const sMap = {'Pendente':'s-pend','Cotação hotel':'s-cot','Ag. confirmação':'s-emi'};
       const consAtual = st.cons_override || normCons(o.cons) || '';
@@ -1312,7 +1315,7 @@ function renderGroups() {
     const urgGrupo = getUrgenciaGrupo(g);
     const consSet = [...new Set(g.os.map(o => normCons(o.cons)))];
 
-    const osRows = g.os.filter(o => STATE[o.n].status !== 'Sim').map(o => {
+    const osRows = g.os.filter(o => STATE[o.n].status !== 'Sim' && !osEstaFinalizada(o.n)).map(o => {
       const st = STATE[o.n];
       const done = st.status==='Sim';
       const sMap={'Pendente':'s-pend','Cotação hotel':'s-cot','Ag. confirmação':'s-emi',};
@@ -1564,27 +1567,27 @@ function updateProgressChart(){
 function updateCharts(){updateProgressChart();}
 function atualizarKPIs() {
   if(typeof DATA === 'undefined' || !DATA.length) return;
-  const totalOS   = DATA.reduce((s,g)=>s+g.os.length,0);
+  const totalOS   = DATA.reduce((s,g)=>s+g.os.filter(o=>!osEstaFinalizada(o.n)).length,0);
   const n_accord  = DATA.filter(g=>g.tipo==='acordo').length;
   const n_hist    = DATA.filter(g=>g.tipo==='historico').length;
   const n_sem     = DATA.filter(g=>g.tipo==='sem_ref').length;
   const n_div     = DATA.filter(g=>g.tipo==='div').length;
-  const n_cot     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Cotação').length,0);
-  const n_emi     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Emissão').length,0);
+  const n_cot     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Cotação' && !osEstaFinalizada(o.n)).length,0);
+  const n_emi     = DATA.reduce((s,g)=>s+g.os.filter(o=>o.q==='Emissão' && !osEstaFinalizada(o.n)).length,0);
   // OS com status "Cotação hotel" deixam de contar como "Ag. Cotação" e viram "Aguardando escolha".
   // Isso só se aplica a OS do tipo Cotação (Emissão fica como está).
   const n_agEscolha = DATA.reduce((s,g)=>s+g.os.filter(o=>
-    o.q==='Cotação' && (STATE[o.n]?.status === 'Cotação hotel')
+    o.q==='Cotação' && (STATE[o.n]?.status === 'Cotação hotel') && !osEstaFinalizada(o.n)
   ).length,0);
   const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
-  // Somar OS de email nos KPIs
+  // Somar OS de email nos KPIs (também filtra finalizadas)
   const nEmail = typeof contarOsEmail === 'function' ? contarOsEmail() : 0;
-  const emailCot = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Cotação'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))).length;
-  const emailEmi = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Emissão'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))).length;
+  const emailCot = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Cotação'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))&&!osEstaFinalizada(os.n)).length;
+  const emailEmi = Object.values(OS_EMAIL_STATE||{}).filter(os=>os.q==='Emissão'&&!DATA.some(g=>g.os.some(o=>o.n===os.n))&&!osEstaFinalizada(os.n)).length;
   // Email pode ter OS já marcadas como "Cotação hotel" também
   const emailAgEscolha = Object.values(OS_EMAIL_STATE||{}).filter(os=>
     os.q==='Cotação' && (STATE[os.n]?.status === 'Cotação hotel') &&
-    !DATA.some(g=>g.os.some(o=>o.n===os.n))
+    !DATA.some(g=>g.os.some(o=>o.n===os.n)) && !osEstaFinalizada(os.n)
   ).length;
   set('kpiTotalOS',     totalOS + nEmail);
   set('kpiTotalGrupos', DATA.length + ' grupos hotel+cidade' + (nEmail > 0 ? ` · 📧 ${nEmail} por email` : ''));
@@ -2841,27 +2844,85 @@ function gravarCacheEmails(dados) {
   }
 }
 
+// Set runtime de OS finalizadas detectadas via email (tipo_evento="emitida").
+// Complementa o OS_FINALIZADAS (que vem do data.js, atualizado a cada hora).
+// Como esse vem em tempo real, OS some do painel imediatamente quando ARGO emite.
+const OS_FINALIZADAS_RUNTIME = new Set();
+
+// Verifica se OS está finalizada (em qualquer das duas fontes)
+function osEstaFinalizada(n) {
+  if (typeof OS_FINALIZADAS !== 'undefined' && OS_FINALIZADAS.has(n)) return true;
+  if (OS_FINALIZADAS_RUNTIME.has(n)) return true;
+  return false;
+}
+
 function processarEmailsParaState(dados) {
   // Recebe array de docs e popula OS_EMAIL_STATE — função extraída pra reutilizar
   // Filtra OS já finalizadas (presentes em OS_FINALIZADAS, vinda do data.js)
+  // Processa tipo_evento de cada email:
+  //   - "emitida"            → adiciona ao set runtime (OS some do painel)
+  //   - "aguardando_escolha" → marca status = "Cotação hotel" (uma vez, sem sobrescrever escolha do consultor)
+  //   - "cotacao"/"emissao"  → comportamento normal (popula OS_EMAIL_STATE)
   let processados = 0;
   let filtrados = 0;
+  let finalizadas_email = 0;
+  let escolha_marcadas = 0;
   const finalizadas = (typeof OS_FINALIZADAS !== 'undefined') ? OS_FINALIZADAS : null;
+
   for (const d of dados) {
     if (!d.assunto || !d.corpo) continue;
     try {
       const os = parseArgoEmail(d.assunto, d.corpo);
       if (!os.n || !os.hotel) continue;
-      // Se OS já está no histórico de reservas finalizadas, pular
+      const tipoEvento = d.tipo_evento || ''; // pode ser '' em emails antigos
+
+      // ── EMAIL "Emitida": OS finalizada, remover do painel ─────────────
+      if (tipoEvento === 'emitida') {
+        OS_FINALIZADAS_RUNTIME.add(os.n);
+        delete OS_EMAIL_STATE[os.n]; // remove se estava aparecendo só pelo email
+        finalizadas_email++;
+        continue;
+      }
+
+      // Se OS já está no histórico de reservas finalizadas (planilha ou runtime), pular
       if (finalizadas && finalizadas.has(os.n)) {
         filtrados++;
         continue;
       }
+      if (OS_FINALIZADAS_RUNTIME.has(os.n)) {
+        filtrados++;
+        continue;
+      }
+
+      // ── EMAIL "Aguardando Escolha": consultor já cotou, cliente vai escolher ─
+      // Marcar status="Cotação hotel" (vira "Aguardando escolha" no badge visual).
+      // SÓ se o consultor ainda não tocou (status="Pendente") — evita sobrescrever
+      // decisão manual posterior do consultor.
+      if (tipoEvento === 'aguardando_escolha') {
+        if (typeof STATE !== 'undefined') {
+          if (STATE[os.n] === undefined) {
+            STATE[os.n] = { status: 'Cotação hotel', resp: '', obs: '', cons_override: '', q_orig: os.q };
+            escolha_marcadas++;
+          } else if (STATE[os.n].status === 'Pendente') {
+            STATE[os.n].status = 'Cotação hotel';
+            // Persistir no Firestore pra que recarregar o painel mantenha
+            if (typeof db !== 'undefined') {
+              db.collection('os_status').doc(String(os.n))
+                .set({ status: 'Cotação hotel' }, { merge: true })
+                .catch(() => {});
+            }
+            escolha_marcadas++;
+          }
+        }
+        // Continua para popular OS_EMAIL_STATE com os dados atuais do email
+      }
+
+      // ── Demais tipos: popular OS_EMAIL_STATE normalmente ──────────────
       const existente = OS_EMAIL_STATE[os.n];
       const recExistente = existente?.recebido || '';
       const recNovo = d.recebido || '';
       if (!existente || recNovo > recExistente) {
-        OS_EMAIL_STATE[os.n] = { ...os, firestoreId: d.id, recebido: recNovo };
+        OS_EMAIL_STATE[os.n] = { ...os, firestoreId: d.id, recebido: recNovo, tipo_evento: tipoEvento };
         if (typeof STATE !== 'undefined' && STATE[os.n] === undefined) {
           STATE[os.n] = { status: 'Pendente', resp: '', obs: '', cons_override: '', q_orig: os.q };
         }
@@ -2869,9 +2930,10 @@ function processarEmailsParaState(dados) {
       processados++;
     } catch(e) {}
   }
-  if (filtrados > 0) {
-    console.log(`[email-first] ${filtrados} emails ignorados (OS já finalizada no histórico)`);
-  }
+
+  if (filtrados > 0) console.log(`[email-first] ${filtrados} emails ignorados (OS já finalizada)`);
+  if (finalizadas_email > 0) console.log(`%c[email-first] ${finalizadas_email} OS marcadas como FINALIZADAS via email "Emitida"`, 'color:#0a7;font-weight:bold');
+  if (escolha_marcadas > 0) console.log(`%c[email-first] ${escolha_marcadas} OS marcadas como "Aguardando escolha" via email`, 'color:#1E40AF;font-weight:bold');
   return processados;
 }
 
@@ -2902,7 +2964,8 @@ async function carregarTodosOsEmails() {
         assunto: d.assunto || '',
         corpo: d.corpo || '',
         recebido: d.recebido || '',
-        processado: d.processado || false
+        processado: d.processado || false,
+        tipo_evento: d.tipo_evento || ''
       });
     });
     gravarCacheEmails(dados);
@@ -2930,15 +2993,42 @@ function iniciarListenerOsEmail() {
         if (!d.assunto || !d.corpo) return;
         const os = parseArgoEmail(d.assunto, d.corpo);
         if (!os.n || !os.hotel) return;
+        const tipoEvento = d.tipo_evento || '';
 
-        // Se OS já está no histórico de reservas finalizadas, ignora — ela não
-        // deveria mais aparecer no painel. Marca como processado pra parar de aparecer
-        // como pendente nos próximos snapshots.
-        if (typeof OS_FINALIZADAS !== 'undefined' && OS_FINALIZADAS.has(os.n)) {
+        // ── EMAIL "Emitida": OS finalizada no ARGO ─────────────────────
+        // Adiciona ao runtime set, remove do OS_EMAIL_STATE se estava lá,
+        // e marca o email como processado. OS some do painel imediatamente.
+        if (tipoEvento === 'emitida') {
+          OS_FINALIZADAS_RUNTIME.add(os.n);
+          delete OS_EMAIL_STATE[os.n];
+          db.collection('os_email').doc(doc.id)
+            .update({ processado: true })
+            .catch(() => {});
+          mudou = true;
+          return;
+        }
+
+        // Se OS já está no histórico de reservas finalizadas, ignora.
+        if (osEstaFinalizada(os.n)) {
           db.collection('os_email').doc(doc.id)
             .update({ processado: true })
             .catch(() => {});
           return;
+        }
+
+        // ── EMAIL "Aguardando Escolha": auto-marca status="Cotação hotel" ─
+        // Só se status atual = "Pendente" (não sobrescreve escolha do consultor)
+        if (tipoEvento === 'aguardando_escolha') {
+          const stAtual = STATE[os.n]?.status || '';
+          if (!stAtual || stAtual === 'Pendente') {
+            if (!STATE[os.n]) STATE[os.n] = { status: 'Cotação hotel', resp: '', obs: '', cons_override: '', q_orig: os.q };
+            else STATE[os.n].status = 'Cotação hotel';
+            db.collection('os_status').doc(String(os.n))
+              .set({ status: 'Cotação hotel' }, { merge: true })
+              .catch(() => {});
+            mudou = true;
+          }
+          // Continua para popular OS_EMAIL_STATE com dados atuais
         }
 
         // ── ATUALIZAR OS_EMAIL_STATE (sempre, em ambos os modos) ─────────────
@@ -2947,7 +3037,7 @@ function iniciarListenerOsEmail() {
         const recExistente = existente?.recebido || '';
         const recNovo = d.recebido || '';
         if (!existente || recNovo >= recExistente) {
-          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id, recebido: recNovo };
+          OS_EMAIL_STATE[os.n] = { ...os, firestoreId: doc.id, recebido: recNovo, tipo_evento: tipoEvento };
           if (STATE[os.n] === undefined) {
             STATE[os.n] = { status: 'Pendente', resp: '', obs: '', cons_override: '', q_orig: os.q };
           }
@@ -3284,7 +3374,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v67] OS já finalizadas no histórico são removidas + cache de emails', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v68] tipo_evento: emails Emitida finalizam OS, Aguardando Escolha auto-marca status', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
