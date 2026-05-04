@@ -2314,6 +2314,7 @@ function renderAuditoriaComDados(c, emailCompleto) {
         antes de migrar o painel para "email-first". OS criadas antes de ${dataCorteStr} não são contadas como divergência
         quando faltam no email (esperado — fluxo do Power Automate começou em ${dataCorteStr}).
         <button onclick="exportarAuditoriaCSV()" style="margin-left:12px;padding:4px 10px;background:#fff;border:1px solid #F59E0B;border-radius:4px;color:#92400E;cursor:pointer;font-weight:600">📥 Exportar CSV</button>
+        <button onclick="reprocessarTipoEvento()" style="margin-left:8px;padding:4px 10px;background:#fff;border:1px solid #1E40AF;border-radius:4px;color:#1E40AF;cursor:pointer;font-weight:600" title="Adiciona tipo_evento aos emails antigos do Firestore (calculado pelo assunto)">🔄 Reprocessar tipo_evento</button>
       </div>
     </div>
   `;
@@ -2526,6 +2527,102 @@ window.verEmailDetalhe = function(firestoreId) {
   }).catch(err => {
     overlay.querySelector('div > div:last-child').innerHTML = `<div style="color:var(--red)">Erro: ${err.message}</div>`;
   });
+};
+
+// Calcula tipo_evento a partir do assunto (mesma lógica do Power Automate)
+function calcularTipoEventoDoAssunto(assunto) {
+  const a = String(assunto || '').toUpperCase();
+  if (a.includes('CANCELAMENTO')) return 'cancelada';
+  if (a.includes('EMITIDA')) return 'emitida';
+  if (a.includes('AGUARDANDO ESCOLHA')) return 'aguardando_escolha';
+  if (a.includes('AGUARDANDO COTAÇÃO')) return 'cotacao';
+  if (a.includes('AGUARDANDO EMISSÃO')) return 'emissao';
+  return 'desconhecido';
+}
+
+// Reprocessa todos os emails do Firestore adicionando/atualizando o campo tipo_evento.
+// Usado uma única vez para popular os emails antigos que foram capturados antes
+// do Power Automate ter o tipo_evento configurado.
+window.reprocessarTipoEvento = async function() {
+  // Garantia de autorização
+  const user = (typeof auth !== 'undefined' && auth.currentUser) ? auth.currentUser : null;
+  const email = user && user.email ? user.email.toLowerCase() : '';
+  if (typeof AUDITORIA_AUTORIZADOS !== 'undefined' && !AUDITORIA_AUTORIZADOS.includes(email)) {
+    alert('Acesso restrito.');
+    return;
+  }
+
+  if (!confirm(
+    'Esta operação vai:\n' +
+    '• Ler todos os emails da coleção os_email do Firestore\n' +
+    '• Adicionar/atualizar o campo tipo_evento em cada um (calculado pelo assunto)\n' +
+    '• Emails que já tem tipo_evento correto não serão modificados\n\n' +
+    'Custo aproximado: ~600 leituras + atualizações.\n\n' +
+    'Continuar?'
+  )) return;
+
+  const start = Date.now();
+  console.log('[reprocessar] iniciando…');
+  try {
+    const snap = await db.collection('os_email').get();
+    let total = snap.size;
+    let atualizados = 0;
+    let inalterados = 0;
+    let erros = 0;
+    const contagem = { cancelada: 0, emitida: 0, aguardando_escolha: 0, cotacao: 0, emissao: 0, desconhecido: 0 };
+
+    console.log(`[reprocessar] ${total} emails encontrados — processando…`);
+
+    // Processar em lotes de 50 pra não sobrecarregar
+    const docs = snap.docs;
+    for (let i = 0; i < docs.length; i += 50) {
+      const lote = docs.slice(i, i + 50);
+      await Promise.all(lote.map(async doc => {
+        const d = doc.data();
+        const tipoCalc = calcularTipoEventoDoAssunto(d.assunto);
+        contagem[tipoCalc] = (contagem[tipoCalc] || 0) + 1;
+        // Pula se já está com tipo_evento correto
+        if (d.tipo_evento === tipoCalc) {
+          inalterados++;
+          return;
+        }
+        try {
+          await doc.ref.update({ tipo_evento: tipoCalc });
+          atualizados++;
+        } catch(e) {
+          erros++;
+          console.error('[reprocessar] erro ao atualizar', doc.id, e);
+        }
+      }));
+      // Log de progresso
+      if ((i + 50) < docs.length) {
+        console.log(`[reprocessar] progresso: ${Math.min(i+50, docs.length)}/${total}`);
+      }
+    }
+
+    const duracao = Math.round((Date.now() - start) / 1000);
+    const resumo =
+      `✅ Reprocessamento concluído em ${duracao}s\n\n` +
+      `Total processado: ${total}\n` +
+      `Atualizados: ${atualizados}\n` +
+      `Já corretos (não tocados): ${inalterados}\n` +
+      `Erros: ${erros}\n\n` +
+      `Por tipo:\n` +
+      `• Cancelamento: ${contagem.cancelada}\n` +
+      `• Emitida: ${contagem.emitida}\n` +
+      `• Aguardando Escolha: ${contagem.aguardando_escolha}\n` +
+      `• Aguardando Cotação: ${contagem.cotacao}\n` +
+      `• Aguardando Emissão: ${contagem.emissao}\n` +
+      `• Desconhecido: ${contagem.desconhecido}\n\n` +
+      `Recarregue o painel (Ctrl+Shift+R) pra que os efeitos apareçam.`;
+    console.log('[reprocessar] resultado', { atualizados, inalterados, erros, contagem });
+    alert(resumo);
+    // Limpar cache local para forçar nova leitura no próximo boot
+    try { localStorage.removeItem('ef_os_email_cache_v1'); } catch(e) {}
+  } catch(err) {
+    console.error('[reprocessar] erro', err);
+    alert('Erro ao reprocessar: ' + err.message);
+  }
 };
 
 // Exporta a auditoria atual em CSV.
@@ -3403,7 +3500,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v71] suporte a tipo_evento=cancelada (remove OS igual a Emitida)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v72] cancelada + botão reprocessar tipo_evento (auditoria)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
