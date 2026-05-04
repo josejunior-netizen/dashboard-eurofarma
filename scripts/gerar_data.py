@@ -86,7 +86,7 @@ def carregar_sourcing(raw_bytes):
     return sourcing
 
 def carregar_historico(raw_bytes):
-    """Retorna dicts de emissores, tarifas e formas de pagamento por hotel+cidade."""
+    """Retorna dicts de emissores, tarifas, formas de pagamento E set de OS finalizadas."""
     import io
     wb = openpyxl.load_workbook(io.BytesIO(raw_bytes), read_only=True)
     ws = wb["Vol. Hotelaria 2026"]
@@ -95,13 +95,24 @@ def carregar_historico(raw_bytes):
     hotel_hist_dbl  = defaultdict(list)
     hotel_emissores = defaultdict(Counter)
     hotel_pagamento = defaultdict(Counter)  # ← NOVO: forma de pagamento por hotel
+    os_finalizadas = set()  # ← NOVO: números de OS já emitidas (para filtrar pendentes)
     for r in rows[1:]:
         hotel      = str(r[17]).strip().upper() if r[17] else ""
         cidade     = str(r[32]).strip().upper() if r[32] else ""
         emissor    = str(r[65]).strip() if r[65] else ""
         tipo_apto  = str(r[40]).strip().upper() if r[40] else "SGL"
+        # Coluna B = índice 1 = Número da OS (toda OS aqui já foi emitida no ARGO)
+        num_os_raw = r[1]
         # Coluna X = índice 23 = Forma de Pagamento
         forma_pgto = str(r[23]).strip() if r[23] else ""
+        # Registrar OS como finalizada (mesmo se outras colunas estão vazias)
+        if num_os_raw is not None and str(num_os_raw).strip() not in ("", "None", "nan"):
+            try:
+                # Pode vir como int, float ou string com decimal
+                num_os = int(float(str(num_os_raw).strip()))
+                os_finalizadas.add(num_os)
+            except (ValueError, TypeError):
+                pass
         if not hotel or emissor in ("None", "COPASTUR", "", "nan"):
             continue
         try:
@@ -118,8 +129,8 @@ def carregar_historico(raw_bytes):
         # Registrar forma de pagamento (ignora valores vazios/inválidos)
         if forma_pgto and forma_pgto.lower() not in ("none", "nan", ""):
             hotel_pagamento[key][forma_pgto] += 1
-    print(f"  OK Historico: {len(hotel_emissores)} hoteis com reservas")
-    return hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento
+    print(f"  OK Historico: {len(hotel_emissores)} hoteis com reservas, {len(os_finalizadas)} OS finalizadas")
+    return hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento, os_finalizadas
 
 def buscar_sourcing(hotel_name, cidade_str, sourcing):
     """
@@ -376,9 +387,39 @@ def limpar_nome_hotel(hotel_raw, cidade_raw):
     return s_norm
 
 
-def processar(os_rows, sourcing, hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento):
-    grupos = defaultdict(list)
+def processar(os_rows, sourcing, hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento, os_finalizadas=None):
+    """
+    Processa OS pendentes do XLS, agrupando por hotel+cidade.
+    Se os_finalizadas é fornecido (set de números de OS já emitidas no histórico),
+    filtra do output as OS que já estão lá — evita "OS fantasmas" no painel.
+    """
+    if os_finalizadas is None:
+        os_finalizadas = set()
+
+    # Filtrar OS já finalizadas ANTES de agrupar
+    os_rows_pendentes = []
+    n_filtradas = 0
+    os_filtradas_sample = []
     for r in os_rows:
+        try:
+            n_os = int(float(str(r.get("NÚMERO DA OS", 0)).replace(",", ".")))
+        except (ValueError, TypeError):
+            n_os = 0
+        if n_os and n_os in os_finalizadas:
+            n_filtradas += 1
+            if len(os_filtradas_sample) < 5:
+                os_filtradas_sample.append(n_os)
+            continue
+        os_rows_pendentes.append(r)
+
+    if n_filtradas > 0:
+        sample_str = ", ".join(f"#{n}" for n in os_filtradas_sample)
+        if n_filtradas > len(os_filtradas_sample):
+            sample_str += f" ...e mais {n_filtradas - len(os_filtradas_sample)}"
+        print(f"  OK {n_filtradas} OS j\u00e1 finalizadas no hist\u00f3rico foram removidas da listagem ({sample_str})")
+
+    grupos = defaultdict(list)
+    for r in os_rows_pendentes:
         hotel_raw = str(r.get("NOME DO HOTEL", "")).strip()
         cidade = str(r.get("CIDADE", "")).strip()
         if not hotel_raw or hotel_raw.lower() in ("nan", "none", ""):
@@ -498,10 +539,16 @@ def processar(os_rows, sourcing, hotel_hist_sgl, hotel_hist_dbl, hotel_emissores
 
     return enriched
 
-def gerar_data_js(enriched, timestamp_str):
+def gerar_data_js(enriched, timestamp_str, os_finalizadas=None):
+    if os_finalizadas is None:
+        os_finalizadas = set()
+    # Lista de números de OS já finalizadas (do histórico Vol. Hotelaria 2026).
+    # Usado pelo painel para filtrar OS de email que apareçam mesmo já tendo sido emitidas.
+    finalizadas_js = "[" + ",".join(str(n) for n in sorted(os_finalizadas)) + "]"
     lines = [
         f'// Gerado automaticamente em {timestamp_str}',
         f'const DATA_TIMESTAMP = "{timestamp_str}";',
+        f'const OS_FINALIZADAS = new Set({finalizadas_js});',
         'const DATA = [',
     ]
 
@@ -574,12 +621,12 @@ def main():
 
     print("\n[2/4] Processando Sourcing e Histórico...")
     sourcing = carregar_sourcing(sourcing_bytes)
-    hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento = carregar_historico(sourcing_bytes)
+    hotel_hist_sgl, hotel_hist_dbl, hotel_emissores, hotel_pagamento, os_finalizadas = carregar_historico(sourcing_bytes)
 
     print("\n[3/4] Lendo OS do XLS...")
     os_rows  = ler_os_xls(xls_bytes)
     enriched = processar(os_rows, sourcing, hotel_hist_sgl, hotel_hist_dbl,
-                         hotel_emissores, hotel_pagamento)
+                         hotel_emissores, hotel_pagamento, os_finalizadas)
 
     from collections import Counter as C
     tipos = C(g["tipo"] for g in enriched)
@@ -590,7 +637,7 @@ def main():
 
     print("\n[4/4] Gerando data.js...")
     ts  = datetime.now(TZ_BR).strftime("%d/%m/%Y %H:%M")
-    js  = gerar_data_js(enriched, ts)
+    js  = gerar_data_js(enriched, ts, os_finalizadas)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(js)
     print(f"  ✓ {OUTPUT_FILE} gravado ({len(js):,} chars)")
