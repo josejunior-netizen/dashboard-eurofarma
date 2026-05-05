@@ -2861,49 +2861,77 @@ window.limparOsOrfas = async function() {
   const agora = Date.now();
   const cutoffMs = 24 * 60 * 60 * 1000; // 24h
 
-  // 3) Identificar candidatos: OS no Firestore que NÃO estão na planilha + email > 24h
-  const candidatos = [];
+  // 3) Pré-passo: coletar OS que JÁ TÊM documento "emitida" ou "cancelada" no Firestore
+  // Esses são os finais — qualquer outro documento dessa mesma OS é resíduo de etapas
+  // anteriores (cotacao/emissao/aguardando_escolha) e pode ser limpado também.
+  const osComFinalEmail = new Set();
+  let snap;
   try {
-    const snap = await db.collection('os_email').get();
-    snap.forEach(doc => {
-      const d = doc.data();
-      if (!d.assunto || !d.corpo) return;
-
-      // Pula OS canceladas/emitidas (já são tratadas pelo fluxo automático)
-      if (d.tipo_evento === 'cancelada' || d.tipo_evento === 'emitida') return;
-
-      try {
-        const os = parseArgoEmail(d.assunto, d.corpo);
-        if (!os.n) return;
-
-        // Critério 1: NÃO está na planilha
-        if (osNaPlanilha.has(os.n)) return;
-
-        // Critério 2: email tem mais de 24h
-        const recebidoStr = d.recebido || '';
-        if (!recebidoStr) return; // sem timestamp, pula por segurança
-        const recebidoMs = Date.parse(recebidoStr);
-        if (isNaN(recebidoMs)) return;
-        if ((agora - recebidoMs) < cutoffMs) return;
-
-        // É órfã
-        candidatos.push({
-          docId: doc.id,
-          n: os.n,
-          hotel: os.hotel,
-          cidade: os.cidade,
-          cons: os.cons,
-          q: os.q,
-          recebido: recebidoStr,
-          tipo_evento: d.tipo_evento || ''
-        });
-      } catch(e) {}
-    });
+    snap = await db.collection('os_email').get();
   } catch(err) {
     console.error('[limpar-orfas] erro lendo Firestore:', err);
     alert('Erro ao ler emails: ' + err.message);
     return;
   }
+  snap.forEach(doc => {
+    const d = doc.data();
+    if (d.tipo_evento === 'emitida' || d.tipo_evento === 'cancelada') {
+      try {
+        const os = parseArgoEmail(d.assunto, d.corpo);
+        if (os.n) osComFinalEmail.add(os.n);
+      } catch(e) {}
+    }
+  });
+  if (osComFinalEmail.size > 0) {
+    console.log(`[limpar-orfas] ${osComFinalEmail.size} OS já têm email final (emitida/cancelada) — seus documentos antigos serão considerados órfãos`);
+  }
+
+  // 4) Identificar candidatos: OS antigas (cotacao/emissao/escolha) que:
+  //    - NÃO estão na planilha + email > 24h, OU
+  //    - JÁ têm um documento "emitida"/"cancelada" pra mesma OS (e o doc atual é antigo)
+  const candidatos = [];
+  snap.forEach(doc => {
+    const d = doc.data();
+    if (!d.assunto || !d.corpo) return;
+
+    // Pula docs que JÁ SÃO emitida/cancelada — esses são os finais, não devem ser deletados
+    if (d.tipo_evento === 'emitida' || d.tipo_evento === 'cancelada') return;
+
+    try {
+      const os = parseArgoEmail(d.assunto, d.corpo);
+      if (!os.n) return;
+
+      // Caso A: já existe documento emitida/cancelada pra essa OS → este doc é resíduo
+      const jaTemFinal = osComFinalEmail.has(os.n);
+
+      // Caso B: critérios originais (24h sem aparecer na planilha)
+      const recebidoStr = d.recebido || '';
+      const recebidoMs = recebidoStr ? Date.parse(recebidoStr) : NaN;
+      const idadeOk = !isNaN(recebidoMs) && (agora - recebidoMs) >= cutoffMs;
+      const naoNaPlanilha = !osNaPlanilha.has(os.n);
+      const eOrfa24h = naoNaPlanilha && idadeOk;
+
+      // É candidato se for caso A OU caso B
+      if (!jaTemFinal && !eOrfa24h) return;
+
+      // Motivo da candidatura (pra mostrar no preview)
+      const motivo = jaTemFinal
+        ? 'OS já tem email final no Firestore'
+        : 'Sumiu da planilha + email > 24h';
+
+      candidatos.push({
+        docId: doc.id,
+        n: os.n,
+        hotel: os.hotel,
+        cidade: os.cidade,
+        cons: os.cons,
+        q: os.q,
+        recebido: recebidoStr,
+        tipo_evento: d.tipo_evento || '',
+        motivo
+      });
+    } catch(e) {}
+  });
 
   // 4) Se nada encontrado
   if (candidatos.length === 0) {
@@ -2919,7 +2947,8 @@ window.limparOsOrfas = async function() {
     { titulo: 'Cidade', valor: c => c.cidade || '?' },
     { titulo: 'Consultor', valor: c => c.cons || '?' },
     { titulo: 'Recebido', valor: c => c.recebido ? c.recebido.substring(0, 16).replace('T', ' ') : '?' },
-    { titulo: 'Tipo', valor: c => c.tipo_evento || 'n/a' }
+    { titulo: 'Tipo', valor: c => c.tipo_evento || 'n/a' },
+    { titulo: 'Motivo', valor: c => c.motivo || '' }
   ];
 
   const confirmou = await mostrarModalConfirmacao({
@@ -4045,7 +4074,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v78] fix grupos vazios + diagnóstico de problemas na auditoria', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v79] limpar OS órfãs detecta resíduos quando há email "Emitida" posterior', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
