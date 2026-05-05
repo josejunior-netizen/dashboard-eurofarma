@@ -965,6 +965,8 @@ function getFiltered(dataOverride) {
       if (!hay.includes(search)) return false;
     }
     if (filterMulti && !g.mc) return false;
+    // Esconder grupos vazios (sem OS) — pode acontecer após reagrupamento email-first
+    if (!g.os || g.os.length === 0) return false;
     // Esconder grupo se todas as OS estão concluídas OU finalizadas no ARGO
     if (g.os.length > 0 && g.os.every(o =>
       (STATE[o.n] && STATE[o.n].status === 'Sim') || osEstaOculta(o.n)
@@ -2401,8 +2403,82 @@ function renderAuditoriaComDados(c, emailCompleto) {
   const styTh = 'background:#F5F6FA;text-align:left;padding:6px 8px;border-bottom:1px solid #E2E5EE;font-weight:600;color:#4B5268';
   const styTd = 'padding:6px 8px;border-bottom:1px solid #F0F2F7;color:#2C3E50';
 
-  // Cards de resumo
+  // Métricas adicionais — calculadas a partir de OS_EMAIL_STATE (todos os emails carregados)
+  const distribTipo = { cotacao: 0, aguardando_escolha: 0, emissao: 0, emitida: 0, cancelada: 0, desconhecido: 0 };
+  let nFinalizadasViaEmail = (typeof OS_FINALIZADAS_RUNTIME !== 'undefined') ? OS_FINALIZADAS_RUNTIME.size : 0;
+  let nAguardandoEscolha = (typeof OS_AGUARDANDO_ESCOLHA !== 'undefined') ? OS_AGUARDANDO_ESCOLHA.size : 0;
+
+  // Contagem de tipos a partir do snapshot completo (emailCompleto)
+  let idadesEmail = []; // ms desde recebimento
+  Object.values(emailCompleto || {}).forEach(em => {
+    const tipo = em.tipo_evento || 'desconhecido';
+    distribTipo[tipo] = (distribTipo[tipo] || 0) + 1;
+    if (em.recebido) {
+      const ms = Date.now() - Date.parse(em.recebido);
+      if (!isNaN(ms) && ms > 0) idadesEmail.push(ms);
+    }
+  });
+
+  const idadeMediaDias = idadesEmail.length > 0
+    ? Math.round(idadesEmail.reduce((s, m) => s + m, 0) / idadesEmail.length / (1000*60*60*24))
+    : 0;
+
+  // OS Sem Nome na planilha mas com nome no email — oportunidade de enriquecimento
+  let nSemNomePlanilhaComEmail = 0;
+  // Grupos com problemas: vazios, com nome "Sem nome", ou tarifa de referência sem OS visível
+  let gruposVazios = []; // grupos sem nenhuma OS
+  let gruposSemNome = []; // grupos com nome "Sem nome" e ainda têm OS
+  let gruposTodasOcultas = []; // grupos com OS mas todas estão ocultas (finalizadas/aguardando_escolha)
+  if (typeof DATA !== 'undefined') {
+    DATA.forEach(g => {
+      const semNome = !g.h || /^sem\s*nome$/i.test(g.h.trim());
+      if (semNome) {
+        g.os.forEach(o => {
+          const ve = (emailCompleto || {})[o.n];
+          if (ve && ve.hotel && !/^sem\s*nome$/i.test((ve.hotel||'').trim())) {
+            nSemNomePlanilhaComEmail++;
+          }
+        });
+        if (g.os.length > 0) gruposSemNome.push({ h: g.h || '(vazio)', c: g.c, qtd: g.os.length });
+      }
+      if (!g.os || g.os.length === 0) {
+        gruposVazios.push({ h: g.h, c: g.c });
+      } else {
+        // Verificar se todas as OS estão ocultas (osEstaOculta = finalizada/aguardando escolha)
+        const todasOcultas = g.os.every(o => typeof osEstaOculta === 'function' && osEstaOculta(o.n));
+        if (todasOcultas) {
+          gruposTodasOcultas.push({ h: g.h, c: g.c, qtd: g.os.length });
+        }
+      }
+    });
+  }
+
+  // Indicador de prontidão pra migração email-only
+  // Critério: % de OS pós-corte da planilha que já têm correspondente no email
+  const prontidao = cobertura;
+  const corPront = prontidao >= 95 ? '#059669' : prontidao >= 80 ? '#F59E0B' : '#DC2626';
+  const bgPront = prontidao >= 95 ? '#D1FAE5' : prontidao >= 80 ? '#FEF3C7' : '#FEE2E2';
+  const labelPront = prontidao >= 95 ? '🟢 Pronto para email-only' : prontidao >= 80 ? '🟡 Quase lá' : '🔴 Em transição';
+  const faltam = aud.soPlanilha.length;
+
+  // Card de prontidão — destaque no topo
   let html = `
+    <div style="background:${bgPront};border:2px solid ${corPront};border-radius:8px;padding:18px 22px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px">
+      <div>
+        <div style="font-size:13px;color:#374151;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;font-weight:700">${labelPront}</div>
+        <div style="font-size:32px;font-weight:800;color:${corPront};line-height:1">Migração para email-only: ${prontidao}%</div>
+        <div style="font-size:13px;color:#374151;margin-top:6px">
+          ${faltam === 0
+            ? 'Todas as OS pós-corte já chegam por email. Pronto pra desligar a planilha do painel.'
+            : `Faltam <b>${faltam} OS</b> aparecerem por email (estão na planilha mas ainda não chegaram por ARGO).`}
+        </div>
+      </div>
+      <div style="font-size:42px;font-weight:800;color:${corPront};opacity:0.4">${prontidao}%</div>
+    </div>
+  `;
+
+  // Cards de resumo (4 originais + 4 novos)
+  html += `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:18px">
       <div style="${styBox};margin:0">
         <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">Cobertura</div>
@@ -2417,12 +2493,87 @@ function renderAuditoriaComDados(c, emailCompleto) {
       <div style="${styBox};margin:0">
         <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">Total Email</div>
         <div style="font-size:28px;font-weight:700;color:#2C3E50">${totalEmail}</div>
-        <div style="font-size:11px;color:#6B7280">recebidos do ARGO</div>
+        <div style="font-size:11px;color:#6B7280">no painel agora</div>
       </div>
       <div style="${styBox};margin:0">
         <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">Divergências</div>
         <div style="font-size:28px;font-weight:700;color:${aud.divergentes.length?'var(--red)':'var(--green)'}">${aud.divergentes.length}</div>
         <div style="font-size:11px;color:#6B7280">campos diferentes</div>
+      </div>
+      <div style="${styBox};margin:0;background:#F0FDF4;border-color:#86EFAC">
+        <div style="font-size:11px;color:#065F46;text-transform:uppercase;letter-spacing:0.5px">OS Finalizadas</div>
+        <div style="font-size:28px;font-weight:700;color:#059669">${distribTipo.emitida}</div>
+        <div style="font-size:11px;color:#065F46">via email "Emitida"</div>
+      </div>
+      <div style="${styBox};margin:0;background:#FEF2F2;border-color:#FCA5A5">
+        <div style="font-size:11px;color:#991B1B;text-transform:uppercase;letter-spacing:0.5px">OS Canceladas</div>
+        <div style="font-size:28px;font-weight:700;color:#DC2626">${distribTipo.cancelada}</div>
+        <div style="font-size:11px;color:#991B1B">via email "Cancelamento"</div>
+      </div>
+      <div style="${styBox};margin:0;background:#EFF6FF;border-color:#93C5FD">
+        <div style="font-size:11px;color:#1E40AF;text-transform:uppercase;letter-spacing:0.5px">Aguard. Escolha</div>
+        <div style="font-size:28px;font-weight:700;color:#1E40AF">${distribTipo.aguardando_escolha}</div>
+        <div style="font-size:11px;color:#1E40AF">cliente vai escolher</div>
+      </div>
+      <div style="${styBox};margin:0">
+        <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">Idade média email</div>
+        <div style="font-size:28px;font-weight:700;color:#2C3E50">${idadeMediaDias}<span style="font-size:14px;color:#6B7280;font-weight:500"> dias</span></div>
+        <div style="font-size:11px;color:#6B7280">${idadesEmail.length} emails analisados</div>
+      </div>
+    </div>
+
+    ${nSemNomePlanilhaComEmail > 0 ? `
+    <div style="${styBox};background:#FFFBEB;border-color:#FCD34D;margin-bottom:14px">
+      <div style="font-size:13px;color:#92400E">
+        💡 <b>${nSemNomePlanilhaComEmail} OS</b> aparecem na planilha como "Sem nome" mas o email tem o nome do hotel.
+        ${MODO_EMAIL_FIRST ? 'O painel já está exibindo o nome do email automaticamente.' : 'Ative o modo email-first pra usar o nome do email.'}
+      </div>
+    </div>
+    ` : ''}
+
+    ${(gruposVazios.length + gruposSemNome.length + gruposTodasOcultas.length) > 0 ? `
+    <details style="${styBox};background:#FEE2E2;border-color:#FCA5A5;margin-bottom:14px;cursor:pointer">
+      <summary style="font-size:13px;color:#991B1B;font-weight:600;list-style:none">
+        ⚠️ ${gruposVazios.length + gruposSemNome.length + gruposTodasOcultas.length} grupos com possíveis problemas — clique pra ver
+      </summary>
+      <div style="margin-top:12px;font-size:12px;color:#7F1D1D">
+        ${gruposVazios.length > 0 ? `
+          <div style="margin-bottom:10px">
+            <b>${gruposVazios.length} grupos vazios</b> (sem nenhuma OS — provavelmente resíduo de reagrupamento email-first):
+            <div style="font-size:11px;margin-top:4px;max-height:120px;overflow-y:auto;background:#fff;padding:6px 8px;border-radius:4px">
+              ${gruposVazios.map(g => `${g.h || '?'} / ${g.c || '?'}`).join('<br>')}
+            </div>
+          </div>
+        ` : ''}
+        ${gruposSemNome.length > 0 ? `
+          <div style="margin-bottom:10px">
+            <b>${gruposSemNome.length} grupos com nome vazio/Sem nome</b> (planilha não trouxe nome — verificar no ARGO):
+            <div style="font-size:11px;margin-top:4px;max-height:120px;overflow-y:auto;background:#fff;padding:6px 8px;border-radius:4px">
+              ${gruposSemNome.map(g => `${g.h || '?'} / ${g.c || '?'} (${g.qtd} OS)`).join('<br>')}
+            </div>
+          </div>
+        ` : ''}
+        ${gruposTodasOcultas.length > 0 ? `
+          <div>
+            <b>${gruposTodasOcultas.length} grupos com todas as OS ocultas</b> (finalizadas/aguardando escolha — podem aparecer vazios visualmente):
+            <div style="font-size:11px;margin-top:4px;max-height:120px;overflow-y:auto;background:#fff;padding:6px 8px;border-radius:4px">
+              ${gruposTodasOcultas.map(g => `${g.h || '?'} / ${g.c || '?'} (${g.qtd} OS ocultas)`).join('<br>')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    </details>
+    ` : ''}
+
+    <div style="${styBox};background:#F9FAFB;border-color:#E5E7EB;margin-bottom:14px">
+      <div style="font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;font-weight:700">Distribuição por tipo de evento (Firestore)</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px">
+        <span><b>${distribTipo.cotacao}</b> cotação</span>
+        <span><b>${distribTipo.aguardando_escolha}</b> aguard. escolha</span>
+        <span><b>${distribTipo.emissao}</b> emissão</span>
+        <span><b>${distribTipo.emitida}</b> emitida</span>
+        <span><b>${distribTipo.cancelada}</b> cancelada</span>
+        ${distribTipo.desconhecido > 0 ? `<span style="color:#DC2626"><b>${distribTipo.desconhecido}</b> desconhecido ⚠️</span>` : ''}
       </div>
     </div>
 
@@ -2544,12 +2695,47 @@ function renderAuditoriaComDados(c, emailCompleto) {
                 <th style="${styTh}">Campo</th>
                 <th style="${styTh};color:#92400E">📊 Planilha</th>
                 <th style="${styTh};color:#1E40AF">📧 Email</th>
-                <th style="${styTh};width:140px">Recebido</th>
+                <th style="${styTh};width:120px">Recebido</th>
+                <th style="${styTh};width:160px">💡 Sugestão</th>
               </tr>
             </thead>
             <tbody>
-            ${divFiltradas.flatMap(item =>
-              item.divs.filter(d => filtroAtual === 'todos' || d.campo === filtroAtual).map((d, i, arr) => `<tr>
+            ${divFiltradas.flatMap(item => {
+              // Calcular idade do email em dias
+              let idadeStr = '';
+              if (item.recebido) {
+                const ms = Date.now() - Date.parse(item.recebido);
+                const dias = Math.round(ms / (1000*60*60*24));
+                idadeStr = isNaN(dias) ? '' : (dias === 0 ? 'hoje' : (dias === 1 ? 'ontem' : `${dias} dias atrás`));
+              }
+              // Sugestão por tipo de divergência
+              const sugestoes = item.divs.map(d => {
+                const c = (d.campo || '').toLowerCase();
+                const ePlan = (d.planilha || '').toString().trim();
+                const eMail = (d.email || '').toString().trim();
+                if (c.includes('hotel') || c.includes('cidade')) {
+                  if (!ePlan && eMail) return 'Email enriqueceu o nome';
+                  if (ePlan && !eMail) return 'Email não capturou nome';
+                  // Comparar normalizando
+                  const norm = s => s.toUpperCase().replace(/[^A-Z0-9 ]/g,'').replace(/\s+/g,' ').trim();
+                  if (norm(ePlan) === norm(eMail)) return 'Mesmo hotel, escrita diferente';
+                  return 'Provável typo ou hotel diferente';
+                }
+                if (c === 'tarifa' || c === 't') {
+                  if (!ePlan && eMail) return 'Email tem tarifa, planilha não';
+                  if (ePlan && !eMail) return 'Planilha tem tarifa, email não';
+                  return 'Tarifa renegociada';
+                }
+                if (c === 'consultor' || c === 'cons') {
+                  return 'Consultor mudou no ARGO';
+                }
+                if (c === 'status' || c === 'q') {
+                  return 'Etapa mudou no ARGO';
+                }
+                return '';
+              });
+
+              return item.divs.filter(d => filtroAtual === 'todos' || d.campo === filtroAtual).map((d, i, arr) => `<tr>
                 ${i===0
                   ? `<td style="${styTd};vertical-align:top" rowspan="${arr.length}">
                        <b>#${item.n}</b>
@@ -2566,10 +2752,14 @@ function renderAuditoriaComDados(c, emailCompleto) {
                 <td style="${styTd};color:#92400E;background:#FFFBEB">${d.planilha||'—'}</td>
                 <td style="${styTd};color:#1E40AF;font-weight:600;background:#EFF6FF">${d.email||'—'}</td>
                 ${i===0
-                  ? `<td style="${styTd};vertical-align:top;font-size:10px;color:#6B7280" rowspan="${arr.length}">${item.recebido?String(item.recebido).substring(0,16).replace('T',' '):'—'}</td>`
+                  ? `<td style="${styTd};vertical-align:top;font-size:10px;color:#6B7280" rowspan="${arr.length}">
+                       ${item.recebido?String(item.recebido).substring(0,16).replace('T',' '):'—'}
+                       ${idadeStr ? `<br><span style="color:#9CA3AF">${idadeStr}</span>` : ''}
+                     </td>`
                   : ''}
-              </tr>`)
-            ).join('')}
+                <td style="${styTd};font-size:11px;color:#6B7280;font-style:italic">${sugestoes[item.divs.indexOf(d)] || '—'}</td>
+              </tr>`);
+            }).join('')}
             </tbody>
           </table></div>
           ${divFiltradas.length === 0 ? '<div style="padding:14px;color:#6B7280;font-size:12px;text-align:center">Nenhuma divergência neste filtro.</div>' : ''}
@@ -2721,25 +2911,27 @@ window.limparOsOrfas = async function() {
     return;
   }
 
-  // 5) Mostrar preview e pedir confirmação
+  // 5) Mostrar modal com lista COMPLETA e pedir confirmação
   candidatos.sort((a, b) => a.n - b.n);
-  const previewLista = candidatos.slice(0, 30).map(c =>
-    `#${c.n} — ${c.hotel || '?'} (${c.cidade || '?'}) — ${c.cons || '?'} — ${c.recebido.substring(0, 16).replace('T', ' ')} — tipo: ${c.tipo_evento || 'n/a'}`
-  ).join('\n');
-  const maisQue30 = candidatos.length > 30 ? `\n\n... e mais ${candidatos.length - 30} OS` : '';
+  const colunas = [
+    { titulo: 'OS', valor: c => `#${c.n}` },
+    { titulo: 'Hotel', valor: c => c.hotel || '?' },
+    { titulo: 'Cidade', valor: c => c.cidade || '?' },
+    { titulo: 'Consultor', valor: c => c.cons || '?' },
+    { titulo: 'Recebido', valor: c => c.recebido ? c.recebido.substring(0, 16).replace('T', ' ') : '?' },
+    { titulo: 'Tipo', valor: c => c.tipo_evento || 'n/a' }
+  ];
 
-  if (!confirm(
-    `🧹 LIMPEZA DE OS ÓRFÃS\n\n` +
-    `Encontradas ${candidatos.length} OS órfãs:\n` +
-    `• Não estão na planilha do ARGO atual\n` +
-    `• Email tem mais de 24h\n` +
-    `• Não estão marcadas como canceladas/emitidas\n\n` +
-    `LISTA:\n${previewLista}${maisQue30}\n\n` +
-    `⚠️ Esta ação vai DELETAR esses ${candidatos.length} documentos do Firestore.\n` +
-    `Eles vão sumir do painel imediatamente.\n` +
-    `\nEsta ação NÃO PODE SER DESFEITA.\n\n` +
-    `Continuar?`
-  )) {
+  const confirmou = await mostrarModalConfirmacao({
+    titulo: '🧹 Limpeza de OS Órfãs',
+    descricao: 'Estas OS estão no email do ARGO mas:\n• Não estão na planilha atual\n• Email tem mais de 24h\n• Não estão marcadas como canceladas/emitidas\n\n⚠️ Esta ação vai DELETAR esses documentos do Firestore.\nNÃO PODE SER DESFEITA.',
+    itens: candidatos,
+    colunas,
+    corPrimaria: '#DC2626',
+    textoConfirmar: `Deletar ${candidatos.length} OS`
+  });
+
+  if (!confirmou) {
     console.log('[limpar-orfas] cancelado pelo usuário');
     return;
   }
@@ -2747,8 +2939,7 @@ window.limparOsOrfas = async function() {
   // 6) Confirmação dupla
   if (!confirm(
     `⚠️ ÚLTIMA CONFIRMAÇÃO\n\n` +
-    `Você tem CERTEZA que quer deletar ${candidatos.length} documentos do Firestore?\n\n` +
-    `Tem certeza absoluta?`
+    `Você tem CERTEZA absoluta que quer deletar ${candidatos.length} documentos do Firestore?`
   )) {
     console.log('[limpar-orfas] cancelado na confirmação dupla');
     return;
@@ -2794,7 +2985,71 @@ window.limparOsOrfas = async function() {
   );
 };
 
-// Calcula tipo_evento a partir do assunto (mesma lógica do Power Automate)
+// Helper: mostra modal com lista completa rolável + botão Confirmar/Cancelar.
+// Retorna Promise que resolve true se confirmar, false se cancelar.
+// Usado em "Limpar OS órfãs" e "Reprocessar tipo_evento" pra mostrar TODAS as OS afetadas.
+function mostrarModalConfirmacao({ titulo, descricao, itens, colunas, corPrimaria, textoConfirmar }) {
+  return new Promise(resolve => {
+    let overlay = document.getElementById('audit-confirm-modal');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'audit-confirm-modal';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+      document.body.appendChild(overlay);
+    }
+    overlay.style.display = 'flex';
+    const cor = corPrimaria || '#1E40AF';
+    const escape = s => String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+    const linhasTabela = itens.map(item => {
+      const cels = colunas.map(col => {
+        const val = typeof col.valor === 'function' ? col.valor(item) : item[col.campo];
+        return `<td style="padding:6px 10px;border-bottom:1px solid #F0F2F7;font-size:12px">${escape(val)}</td>`;
+      }).join('');
+      return `<tr>${cels}</tr>`;
+    }).join('');
+
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:8px;padding:0;max-width:900px;max-height:85vh;width:92%;display:flex;flex-direction:column">
+        <div style="padding:18px 22px;border-bottom:1px solid #E5E7EB">
+          <h3 style="margin:0;font-size:16px;color:${cor}">${escape(titulo)}</h3>
+          <div style="margin-top:6px;font-size:13px;color:#374151;white-space:pre-line">${escape(descricao)}</div>
+          <div style="margin-top:8px;font-size:13px;font-weight:600;color:${cor}">Total: ${itens.length} ${itens.length === 1 ? 'item' : 'itens'}</div>
+        </div>
+        <div style="overflow:auto;max-height:55vh;padding:0 22px">
+          <table style="width:100%;border-collapse:collapse;margin:14px 0">
+            <thead style="position:sticky;top:0;background:#F9FAFB;z-index:1">
+              <tr>${colunas.map(col => `<th style="text-align:left;padding:8px 10px;border-bottom:2px solid #E5E7EB;font-size:11px;color:#6B7280;text-transform:uppercase;letter-spacing:0.5px">${escape(col.titulo)}</th>`).join('')}</tr>
+            </thead>
+            <tbody>${linhasTabela}</tbody>
+          </table>
+        </div>
+        <div style="padding:16px 22px;border-top:1px solid #E5E7EB;display:flex;justify-content:flex-end;gap:10px">
+          <button id="audit-modal-cancelar" style="padding:8px 18px;background:#F3F4F6;border:1px solid #D1D5DB;border-radius:6px;color:#374151;cursor:pointer;font-weight:600;font-size:13px">Cancelar</button>
+          <button id="audit-modal-confirmar" style="padding:8px 18px;background:${cor};border:1px solid ${cor};border-radius:6px;color:#fff;cursor:pointer;font-weight:600;font-size:13px">${escape(textoConfirmar || 'Confirmar')}</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('audit-modal-cancelar').onclick = () => {
+      overlay.style.display = 'none';
+      resolve(false);
+    };
+    document.getElementById('audit-modal-confirmar').onclick = () => {
+      overlay.style.display = 'none';
+      resolve(true);
+    };
+    // Fechar clicando fora
+    overlay.onclick = (e) => {
+      if (e.target === overlay) {
+        overlay.style.display = 'none';
+        resolve(false);
+      }
+    };
+  });
+}
+
+
 function calcularTipoEventoDoAssunto(assunto) {
   const a = String(assunto || '').toUpperCase();
   if (a.includes('CANCELAMENTO')) return 'cancelada';
@@ -2817,62 +3072,88 @@ window.reprocessarTipoEvento = async function() {
     return;
   }
 
-  if (!confirm(
-    'Esta operação vai:\n' +
-    '• Ler todos os emails da coleção os_email do Firestore\n' +
-    '• Adicionar/atualizar o campo tipo_evento em cada um (calculado pelo assunto)\n' +
-    '• Emails que já tem tipo_evento correto não serão modificados\n\n' +
-    'Custo aproximado: ~600 leituras + atualizações.\n\n' +
-    'Continuar?'
-  )) return;
-
-  const start = Date.now();
-  console.log('[reprocessar] iniciando…');
+  console.log('[reprocessar] analisando emails do Firestore…');
+  let snap;
   try {
-    const snap = await db.collection('os_email').get();
-    let total = snap.size;
+    snap = await db.collection('os_email').get();
+  } catch(err) {
+    alert('Erro ao ler Firestore: ' + err.message);
+    return;
+  }
+
+  // Calcular o que vai ser alterado
+  const aMudar = [];
+  snap.forEach(doc => {
+    const d = doc.data();
+    const tipoCalc = calcularTipoEventoDoAssunto(d.assunto);
+    if (d.tipo_evento !== tipoCalc) {
+      aMudar.push({
+        docId: doc.id,
+        assunto: (d.assunto || '').substring(0, 80),
+        tipoAtual: d.tipo_evento || '(vazio)',
+        tipoNovo: tipoCalc
+      });
+    }
+  });
+
+  if (aMudar.length === 0) {
+    alert(`✅ Tudo certo!\n\n${snap.size} emails analisados, todos com tipo_evento correto.\nNada precisa ser atualizado.`);
+    return;
+  }
+
+  // Mostrar preview com lista completa
+  const colunas = [
+    { titulo: 'Assunto', valor: c => c.assunto },
+    { titulo: 'Atual', valor: c => c.tipoAtual },
+    { titulo: 'Novo', valor: c => c.tipoNovo }
+  ];
+
+  const confirmou = await mostrarModalConfirmacao({
+    titulo: '🔄 Reprocessar tipo_evento',
+    descricao: `${snap.size} emails analisados\n${aMudar.length} serão atualizados\n${snap.size - aMudar.length} já têm tipo_evento correto (não serão tocados)\n\nO tipo_evento é calculado a partir do assunto do email.`,
+    itens: aMudar,
+    colunas,
+    corPrimaria: '#1E40AF',
+    textoConfirmar: `Atualizar ${aMudar.length} emails`
+  });
+
+  if (!confirmou) {
+    console.log('[reprocessar] cancelado pelo usuário');
+    return;
+  }
+
+  // Executar
+  const start = Date.now();
+  console.log(`[reprocessar] aplicando ${aMudar.length} atualizações…`);
+  try {
     let atualizados = 0;
-    let inalterados = 0;
     let erros = 0;
     const contagem = { cancelada: 0, emitida: 0, aguardando_escolha: 0, cotacao: 0, emissao: 0, desconhecido: 0 };
 
-    console.log(`[reprocessar] ${total} emails encontrados — processando…`);
-
-    // Processar em lotes de 50 pra não sobrecarregar
-    const docs = snap.docs;
-    for (let i = 0; i < docs.length; i += 50) {
-      const lote = docs.slice(i, i + 50);
-      await Promise.all(lote.map(async doc => {
-        const d = doc.data();
-        const tipoCalc = calcularTipoEventoDoAssunto(d.assunto);
-        contagem[tipoCalc] = (contagem[tipoCalc] || 0) + 1;
-        // Pula se já está com tipo_evento correto
-        if (d.tipo_evento === tipoCalc) {
-          inalterados++;
-          return;
-        }
+    // Processar em lotes de 50
+    for (let i = 0; i < aMudar.length; i += 50) {
+      const lote = aMudar.slice(i, i + 50);
+      await Promise.all(lote.map(async item => {
+        contagem[item.tipoNovo] = (contagem[item.tipoNovo] || 0) + 1;
         try {
-          await doc.ref.update({ tipo_evento: tipoCalc });
+          await db.collection('os_email').doc(item.docId).update({ tipo_evento: item.tipoNovo });
           atualizados++;
         } catch(e) {
           erros++;
-          console.error('[reprocessar] erro ao atualizar', doc.id, e);
+          console.error('[reprocessar] erro', item.docId, e);
         }
       }));
-      // Log de progresso
-      if ((i + 50) < docs.length) {
-        console.log(`[reprocessar] progresso: ${Math.min(i+50, docs.length)}/${total}`);
+      if ((i + 50) < aMudar.length) {
+        console.log(`[reprocessar] progresso: ${Math.min(i+50, aMudar.length)}/${aMudar.length}`);
       }
     }
 
     const duracao = Math.round((Date.now() - start) / 1000);
     const resumo =
       `✅ Reprocessamento concluído em ${duracao}s\n\n` +
-      `Total processado: ${total}\n` +
       `Atualizados: ${atualizados}\n` +
-      `Já corretos (não tocados): ${inalterados}\n` +
       `Erros: ${erros}\n\n` +
-      `Por tipo:\n` +
+      `Por tipo aplicado:\n` +
       `• Cancelamento: ${contagem.cancelada}\n` +
       `• Emitida: ${contagem.emitida}\n` +
       `• Aguardando Escolha: ${contagem.aguardando_escolha}\n` +
@@ -2880,9 +3161,8 @@ window.reprocessarTipoEvento = async function() {
       `• Aguardando Emissão: ${contagem.emissao}\n` +
       `• Desconhecido: ${contagem.desconhecido}\n\n` +
       `Recarregue o painel (Ctrl+Shift+R) pra que os efeitos apareçam.`;
-    console.log('[reprocessar] resultado', { atualizados, inalterados, erros, contagem });
+    console.log('[reprocessar] resultado', { atualizados, erros, contagem });
     alert(resumo);
-    // Limpar cache local para forçar nova leitura no próximo boot
     try { localStorage.removeItem('ef_os_email_cache_v1'); } catch(e) {}
   } catch(err) {
     console.error('[reprocessar] erro', err);
@@ -3765,7 +4045,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v76] hotel do email reagrupa OS (TODAS as OS, não só Sem Nome)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v78] fix grupos vazios + diagnóstico de problemas na auditoria', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
