@@ -2869,13 +2869,20 @@ window.limparOsOrfas = async function() {
   }));
   console.log(`[limpar-orfas] ${osNoPainel.size} OS aparecem no painel agora`);
 
-  // 3) Calcular timestamp do data.js (planilha) — usado pra Caso B
-  // Formato esperado: "04/05/2026 18:08" ou "04/05 18:08"
+  // 3) Calcular timestamp da última planilha — usado pra Caso B
+  // PLANILHA_TIMESTAMP é o Last-Modified do XLS (quando ARGO atualizou).
+  // DATA_TIMESTAMP é quando o gerar_data.py rodou (pode ser horas depois).
+  // Pra detectar OS que sumiram da planilha, o relevante é PLANILHA_TIMESTAMP.
+  // Se PLANILHA_TIMESTAMP não existir (data.js antigo), cai no DATA_TIMESTAMP como fallback.
   let dataPlanilhaMs = null;
+  let timestampUsado = '';
   try {
-    if (typeof DATA_TIMESTAMP === 'string') {
-      // Tentar parsear formato "dd/mm/yyyy hh:mm" ou "dd/mm hh:mm"
-      const m1 = DATA_TIMESTAMP.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s+(\d{1,2}):(\d{2})/);
+    const tsStr = (typeof PLANILHA_TIMESTAMP !== 'undefined' && PLANILHA_TIMESTAMP)
+      ? PLANILHA_TIMESTAMP
+      : (typeof DATA_TIMESTAMP !== 'undefined' ? DATA_TIMESTAMP : '');
+    if (tsStr) {
+      // Parsear formato "dd/mm/yyyy hh:mm" ou "dd/mm hh:mm"
+      const m1 = tsStr.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s+(\d{1,2}):(\d{2})/);
       if (m1) {
         const dia = parseInt(m1[1]);
         const mes = parseInt(m1[2]) - 1;
@@ -2883,10 +2890,12 @@ window.limparOsOrfas = async function() {
         const hora = parseInt(m1[4]);
         const min = parseInt(m1[5]);
         dataPlanilhaMs = new Date(ano, mes, dia, hora, min).getTime();
-        console.log(`[limpar-orfas] última planilha: ${DATA_TIMESTAMP} (${new Date(dataPlanilhaMs).toLocaleString('pt-BR')})`);
+        timestampUsado = tsStr;
+        const fonte = (typeof PLANILHA_TIMESTAMP !== 'undefined' && PLANILHA_TIMESTAMP) ? 'PLANILHA_TIMESTAMP' : 'DATA_TIMESTAMP (fallback)';
+        console.log(`[limpar-orfas] usando ${fonte}: ${tsStr} (${new Date(dataPlanilhaMs).toLocaleString('pt-BR')})`);
       }
     }
-  } catch(e) { console.warn('[limpar-orfas] falha ao parsear DATA_TIMESTAMP:', e); }
+  } catch(e) { console.warn('[limpar-orfas] falha ao parsear timestamp da planilha:', e); }
 
   // 4) Pré-passo: coletar OS que JÁ TÊM documento "emitida" ou "cancelada" no Firestore
   const osComFinalEmail = new Set();
@@ -4218,7 +4227,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v84] botão Reprocessar timestamps (preencher recebido vazio em emails antigos)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v85] usa PLANILHA_TIMESTAMP (Last-Modified real) na limpeza de OS órfãs', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
