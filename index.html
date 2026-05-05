@@ -2585,6 +2585,7 @@ function renderAuditoriaComDados(c, emailCompleto) {
         quando faltam no email (esperado — fluxo do Power Automate começou em ${dataCorteStr}).
         <button onclick="exportarAuditoriaCSV()" style="margin-left:12px;padding:4px 10px;background:#fff;border:1px solid #F59E0B;border-radius:4px;color:#92400E;cursor:pointer;font-weight:600">📥 Exportar CSV</button>
         <button onclick="reprocessarTipoEvento()" style="margin-left:8px;padding:4px 10px;background:#fff;border:1px solid #1E40AF;border-radius:4px;color:#1E40AF;cursor:pointer;font-weight:600" title="Adiciona tipo_evento aos emails antigos do Firestore (calculado pelo assunto)">🔄 Reprocessar tipo_evento</button>
+        <button onclick="reprocessarTimestamps()" style="margin-left:8px;padding:4px 10px;background:#fff;border:1px solid #6B21A8;border-radius:4px;color:#6B21A8;cursor:pointer;font-weight:600" title="Preenche o campo 'recebido' nos emails antigos que vieram com timestamp vazio (usa data de criação do documento no Firestore como fallback)">🕒 Reprocessar timestamps</button>
         <button onclick="limparOsOrfas()" style="margin-left:8px;padding:4px 10px;background:#fff;border:1px solid #DC2626;border-radius:4px;color:#DC2626;cursor:pointer;font-weight:600" title="Remove OS antigas que estão no email mas sumiram da planilha (provavelmente canceladas em data anterior à captura de email Cancelamento)">🧹 Limpar OS órfãs</button>
       </div>
     </div>
@@ -3118,6 +3119,119 @@ function calcularTipoEventoDoAssunto(assunto) {
   if (a.includes('AGUARDANDO EMISSÃO')) return 'emissao';
   return 'desconhecido';
 }
+
+// Reprocessa timestamps vazios em emails antigos do Firestore.
+// Documentos antigos (antes da correção do Power Automate) têm `recebido = ""`.
+// Como o JS SDK não expõe createTime, usamos um timestamp fixo "antigo"
+// (01/01/2026) — assim a função de Limpar OS órfãs pode tratá-los como
+// candidatos pelo critério "sumiu da planilha".
+window.reprocessarTimestamps = async function() {
+  // Garantia de autorização
+  const user = (typeof auth !== 'undefined' && auth.currentUser) ? auth.currentUser : null;
+  const email = user && user.email ? user.email.toLowerCase() : '';
+  if (typeof AUDITORIA_AUTORIZADOS !== 'undefined' && !AUDITORIA_AUTORIZADOS.includes(email)) {
+    alert('Acesso restrito.');
+    return;
+  }
+
+  console.log('[reprocessar-timestamps] analisando emails do Firestore…');
+  let snap;
+  try {
+    snap = await db.collection('os_email').get();
+  } catch(err) {
+    alert('Erro ao ler Firestore: ' + err.message);
+    return;
+  }
+
+  // Timestamp fixo antigo: 01/01/2026 00:00 UTC
+  // Garante que esses docs sejam considerados "anteriores a qualquer planilha"
+  const TIMESTAMP_FALLBACK = '2026-01-01T00:00:00.000Z';
+
+  // Identificar docs com `recebido` vazio ou inválido
+  const aMudar = [];
+  snap.forEach(doc => {
+    const d = doc.data();
+    const recebidoStr = d.recebido || '';
+    if (recebidoStr && !isNaN(Date.parse(recebidoStr))) return;
+
+    // Identificar OS pra mostrar no preview
+    let osNum = null, hotel = '?', cidade = '?';
+    try {
+      const os = parseArgoEmail(d.assunto, d.corpo);
+      osNum = os.n;
+      hotel = os.hotel || '?';
+      cidade = os.cidade || '?';
+    } catch(e) {}
+
+    aMudar.push({
+      docId: doc.id,
+      n: osNum,
+      hotel,
+      cidade,
+      tipo_evento: d.tipo_evento || '?'
+    });
+  });
+
+  if (aMudar.length === 0) {
+    alert(`✅ Tudo certo!\n\n${snap.size} emails analisados, todos com timestamp válido.\nNada precisa ser atualizado.`);
+    return;
+  }
+
+  // Mostrar preview
+  aMudar.sort((a, b) => (a.n || 0) - (b.n || 0));
+  const colunas = [
+    { titulo: 'OS', valor: c => c.n ? `#${c.n}` : '?' },
+    { titulo: 'Hotel', valor: c => c.hotel },
+    { titulo: 'Cidade', valor: c => c.cidade },
+    { titulo: 'Tipo', valor: c => c.tipo_evento }
+  ];
+
+  const confirmou = await mostrarModalConfirmacao({
+    titulo: '🕒 Reprocessar timestamps',
+    descricao: `${snap.size} emails analisados\n${aMudar.length} têm timestamp vazio\n\nO Firebase JS SDK não expõe a data de criação real do documento. Vamos atribuir o timestamp fallback "${TIMESTAMP_FALLBACK.substring(0, 10)}" (data antiga) para que a função "Limpar OS órfãs" possa tratá-los normalmente.\n\nObs: emails capturados a partir de agora terão timestamp real (Power Automate corrigido).`,
+    itens: aMudar,
+    colunas,
+    corPrimaria: '#6B21A8',
+    textoConfirmar: `Atualizar ${aMudar.length} emails`
+  });
+
+  if (!confirmou) {
+    console.log('[reprocessar-timestamps] cancelado pelo usuário');
+    return;
+  }
+
+  // Executar
+  const start = Date.now();
+  console.log(`[reprocessar-timestamps] aplicando ${aMudar.length} atualizações…`);
+  let atualizados = 0;
+  let erros = 0;
+
+  for (let i = 0; i < aMudar.length; i += 50) {
+    const lote = aMudar.slice(i, i + 50);
+    await Promise.all(lote.map(async item => {
+      try {
+        await db.collection('os_email').doc(item.docId).update({ recebido: TIMESTAMP_FALLBACK });
+        atualizados++;
+      } catch(e) {
+        erros++;
+        console.error('[reprocessar-timestamps] erro', item.docId, e);
+      }
+    }));
+    if ((i + 50) < aMudar.length) {
+      console.log(`[reprocessar-timestamps] progresso: ${Math.min(i+50, aMudar.length)}/${aMudar.length}`);
+    }
+  }
+
+  const duracao = Math.round((Date.now() - start) / 1000);
+  console.log(`[reprocessar-timestamps] concluído em ${duracao}s — ${atualizados} atualizados, ${erros} erros`);
+  alert(
+    `✅ Reprocessamento concluído em ${duracao}s\n\n` +
+    `Atualizados: ${atualizados}\n` +
+    `Erros: ${erros}\n\n` +
+    `Agora a função "Limpar OS órfãs" vai considerar esses emails como antigos.\nRecarregue o painel (Ctrl+Shift+R).`
+  );
+  try { localStorage.removeItem('ef_os_email_cache_v1'); } catch(e) {}
+};
 
 // Reprocessa todos os emails do Firestore adicionando/atualizando o campo tipo_evento.
 // Usado uma única vez para popular os emails antigos que foram capturados antes
@@ -4104,7 +4218,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v83] Limpar OS órfãs: usa timestamp da planilha (não 24h fixas)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v84] botão Reprocessar timestamps (preencher recebido vazio em emails antigos)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
