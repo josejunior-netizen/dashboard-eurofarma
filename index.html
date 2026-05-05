@@ -841,12 +841,15 @@ function loadPersisted() {
     });
   });
   if(typeof DATA_TIMESTAMP !== 'undefined') {
+    // Preferir PLANILHA_TIMESTAMP (Last-Modified real do XLS).
+    // Cai em DATA_TIMESTAMP se PLANILHA_TIMESTAMP não existir (data.js antigo).
+    const tsPlan = (typeof PLANILHA_TIMESTAMP !== 'undefined' && PLANILHA_TIMESTAMP) ? PLANILHA_TIMESTAMP : DATA_TIMESTAMP;
     const el = document.getElementById('badgeTs');
-    if(el) el.textContent = '↻ ' + DATA_TIMESTAMP;
+    if(el) el.textContent = '↻ ' + tsPlan;
     const subDyn = document.getElementById('tb-sub-dynamic');
-    if(subDyn) subDyn.textContent = `Eurofarma · Copastur · ${DATA.length} grupos · ${DATA.reduce((s,g)=>s+g.os.length,0)} OS · ${DATA_TIMESTAMP}`;
+    if(subDyn) subDyn.textContent = `Eurofarma · Copastur · ${DATA.length} grupos · ${DATA.reduce((s,g)=>s+g.os.length,0)} OS · ${tsPlan}`;
     const sumTs = document.getElementById('sumTs');
-    if(sumTs) sumTs.textContent = DATA_TIMESTAMP;
+    if(sumTs) sumTs.textContent = tsPlan;
   }
 }
 
@@ -1731,12 +1734,15 @@ function atualizarKPIs() {
   }
 
   const tbSub = document.getElementById('tbSub');
-  if(tbSub && typeof DATA_TIMESTAMP !== 'undefined')
-    tbSub.textContent = 'Eurofarma · Copastur · ' + DATA.length + ' grupos · ' + totalOS + ' OS · ' + DATA_TIMESTAMP + ultimoEmailTs;
+  // Preferir PLANILHA_TIMESTAMP (Last-Modified do XLS).
+  const tsPlan = (typeof PLANILHA_TIMESTAMP !== 'undefined' && PLANILHA_TIMESTAMP) ? PLANILHA_TIMESTAMP
+               : (typeof DATA_TIMESTAMP !== 'undefined' ? DATA_TIMESTAMP : '');
+  if(tbSub && tsPlan)
+    tbSub.textContent = 'Eurofarma · Copastur · ' + DATA.length + ' grupos · ' + totalOS + ' OS · ' + tsPlan + ultimoEmailTs;
   const ts = document.getElementById('badgeTs');
-  if(ts && typeof DATA_TIMESTAMP !== 'undefined') ts.textContent = DATA_TIMESTAMP + ultimoEmailTs;
+  if(ts && tsPlan) ts.textContent = tsPlan + ultimoEmailTs;
   const sumTs = document.getElementById('sumTs');
-  if(sumTs && typeof DATA_TIMESTAMP !== 'undefined') sumTs.textContent = DATA_TIMESTAMP + ultimoEmailTs;
+  if(sumTs && tsPlan) sumTs.textContent = tsPlan + ultimoEmailTs;
 }
 
 window.switchTab = function(tab) {
@@ -2941,6 +2947,17 @@ window.limparOsOrfas = async function() {
 
       // ⭐ FILTRO PRINCIPAL: a OS precisa estar APARECENDO NO PAINEL
       if (!osNoPainel.has(os.n)) return;
+
+      // ⭐ FILTRO 2: o documento atual deve ser o "ativo" — o que está renderizando a OS.
+      // Se a OS está no painel via OUTRO documento mais novo (ex: chegou Aguardando Emissão
+      // após Aguardando Escolha), o doc antigo é só lixo histórico — limpá-lo NÃO tira
+      // a OS do painel. Pra evitar confundir o usuário, só sinalizamos como órfão se
+      // nenhum doc ativo está no OS_EMAIL_STATE OU se for o documento atualmente ativo.
+      const stateAtual = OS_EMAIL_STATE[os.n];
+      if (stateAtual && stateAtual.firestoreId && stateAtual.firestoreId !== doc.id) {
+        // Outro doc é o ativo no painel — esse aqui é resíduo, não é "travada"
+        return;
+      }
 
       const jaTemFinal = osComFinalEmail.has(os.n);
       const recebidoStr = d.recebido || '';
@@ -4227,7 +4244,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v85] usa PLANILHA_TIMESTAMP (Last-Modified real) na limpeza de OS órfãs', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v86] subtítulo usa PLANILHA_TIMESTAMP + filtro de docs ativos em Limpar OS órfãs', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
