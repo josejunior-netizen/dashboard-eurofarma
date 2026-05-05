@@ -2857,13 +2857,37 @@ window.limparOsOrfas = async function() {
   const osNaPlanilha = new Set();
   DATA.forEach(g => g.os.forEach(o => osNaPlanilha.add(o.n)));
 
-  // 2) Cutoff: 24h atrás
-  const agora = Date.now();
-  const cutoffMs = 24 * 60 * 60 * 1000; // 24h
+  // 2) Identificar OS QUE APARECEM NO PAINEL AGORA (visíveis ao consultor).
+  const osNoPainel = new Set();
+  Object.keys(OS_EMAIL_STATE || {}).forEach(n => {
+    const num = parseInt(n);
+    if (!isNaN(num) && !osEstaOculta(num)) osNoPainel.add(num);
+  });
+  DATA.forEach(g => g.os.forEach(o => {
+    if (!osEstaOculta(o.n)) osNoPainel.add(o.n);
+  }));
+  console.log(`[limpar-orfas] ${osNoPainel.size} OS aparecem no painel agora`);
 
-  // 3) Pré-passo: coletar OS que JÁ TÊM documento "emitida" ou "cancelada" no Firestore
-  // Esses são os finais — qualquer outro documento dessa mesma OS é resíduo de etapas
-  // anteriores (cotacao/emissao/aguardando_escolha) e pode ser limpado também.
+  // 3) Calcular timestamp do data.js (planilha) — usado pra Caso B
+  // Formato esperado: "04/05/2026 18:08" ou "04/05 18:08"
+  let dataPlanilhaMs = null;
+  try {
+    if (typeof DATA_TIMESTAMP === 'string') {
+      // Tentar parsear formato "dd/mm/yyyy hh:mm" ou "dd/mm hh:mm"
+      const m1 = DATA_TIMESTAMP.match(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\s+(\d{1,2}):(\d{2})/);
+      if (m1) {
+        const dia = parseInt(m1[1]);
+        const mes = parseInt(m1[2]) - 1;
+        const ano = m1[3] ? (parseInt(m1[3]) < 100 ? 2000 + parseInt(m1[3]) : parseInt(m1[3])) : new Date().getFullYear();
+        const hora = parseInt(m1[4]);
+        const min = parseInt(m1[5]);
+        dataPlanilhaMs = new Date(ano, mes, dia, hora, min).getTime();
+        console.log(`[limpar-orfas] última planilha: ${DATA_TIMESTAMP} (${new Date(dataPlanilhaMs).toLocaleString('pt-BR')})`);
+      }
+    }
+  } catch(e) { console.warn('[limpar-orfas] falha ao parsear DATA_TIMESTAMP:', e); }
+
+  // 4) Pré-passo: coletar OS que JÁ TÊM documento "emitida" ou "cancelada" no Firestore
   const osComFinalEmail = new Set();
   let snap;
   try {
@@ -2883,41 +2907,47 @@ window.limparOsOrfas = async function() {
     }
   });
   if (osComFinalEmail.size > 0) {
-    console.log(`[limpar-orfas] ${osComFinalEmail.size} OS já têm email final (emitida/cancelada) — seus documentos antigos serão considerados órfãos`);
+    console.log(`[limpar-orfas] ${osComFinalEmail.size} OS têm email final (emitida/cancelada) no Firestore`);
   }
 
-  // 4) Identificar candidatos: OS antigas (cotacao/emissao/escolha) que:
-  //    - NÃO estão na planilha + email > 24h, OU
-  //    - JÁ têm um documento "emitida"/"cancelada" pra mesma OS (e o doc atual é antigo)
+  // 5) Identificar candidatos:
+  //    - APENAS OS que ainda APARECEM NO PAINEL
+  //    - Documento é de tipo antigo (cotacao/emissao/aguardando_escolha)
+  //    - E pelo menos UM destes:
+  //      Caso A: Já tem doc emitida/cancelada pra essa OS no Firestore (algo deu errado, painel não removeu)
+  //      Caso B: OS sumiu da última planilha + email é MAIS ANTIGO que a planilha
+  //              (planilha foi gerada DEPOIS do email e a OS já não estava lá → ARGO removeu)
   const candidatos = [];
   snap.forEach(doc => {
     const d = doc.data();
     if (!d.assunto || !d.corpo) return;
 
-    // Pula docs que JÁ SÃO emitida/cancelada — esses são os finais, não devem ser deletados
+    // Pula docs finais (emitida/cancelada) — não deletar
     if (d.tipo_evento === 'emitida' || d.tipo_evento === 'cancelada') return;
 
     try {
       const os = parseArgoEmail(d.assunto, d.corpo);
       if (!os.n) return;
 
-      // Caso A: já existe documento emitida/cancelada pra essa OS → este doc é resíduo
-      const jaTemFinal = osComFinalEmail.has(os.n);
+      // ⭐ FILTRO PRINCIPAL: a OS precisa estar APARECENDO NO PAINEL
+      if (!osNoPainel.has(os.n)) return;
 
-      // Caso B: critérios originais (24h sem aparecer na planilha)
+      const jaTemFinal = osComFinalEmail.has(os.n);
       const recebidoStr = d.recebido || '';
       const recebidoMs = recebidoStr ? Date.parse(recebidoStr) : NaN;
-      const idadeOk = !isNaN(recebidoMs) && (agora - recebidoMs) >= cutoffMs;
-      const naoNaPlanilha = !osNaPlanilha.has(os.n);
-      const eOrfa24h = naoNaPlanilha && idadeOk;
+
+      // Caso B: sumiu da planilha + email mais antigo que a planilha
+      let eOrfaPlanilha = false;
+      if (!osNaPlanilha.has(os.n) && dataPlanilhaMs && !isNaN(recebidoMs)) {
+        eOrfaPlanilha = recebidoMs < dataPlanilhaMs;
+      }
 
       // É candidato se for caso A OU caso B
-      if (!jaTemFinal && !eOrfa24h) return;
+      if (!jaTemFinal && !eOrfaPlanilha) return;
 
-      // Motivo da candidatura (pra mostrar no preview)
       const motivo = jaTemFinal
-        ? 'OS já tem email final no Firestore'
-        : 'Sumiu da planilha + email > 24h';
+        ? 'Tem email final mas painel não removeu'
+        : 'Sumiu da última planilha';
 
       candidatos.push({
         docId: doc.id,
@@ -2933,13 +2963,13 @@ window.limparOsOrfas = async function() {
     } catch(e) {}
   });
 
-  // 4) Se nada encontrado
+  // 6) Se nada encontrado
   if (candidatos.length === 0) {
-    alert('✅ Nenhuma OS órfã encontrada.\n\nTodas as OS de email ou estão na planilha, ou foram canceladas/emitidas, ou têm menos de 24h.');
+    alert('✅ Nenhuma OS órfã encontrada.\n\nNenhuma OS visível no painel está travada.');
     return;
   }
 
-  // 5) Mostrar modal com lista COMPLETA e pedir confirmação
+  // 7) Mostrar modal com lista COMPLETA e pedir confirmação
   candidatos.sort((a, b) => a.n - b.n);
   const colunas = [
     { titulo: 'OS', valor: c => `#${c.n}` },
@@ -2953,7 +2983,7 @@ window.limparOsOrfas = async function() {
 
   const confirmou = await mostrarModalConfirmacao({
     titulo: '🧹 Limpeza de OS Órfãs',
-    descricao: 'Estas OS estão no email do ARGO mas:\n• Não estão na planilha atual\n• Email tem mais de 24h\n• Não estão marcadas como canceladas/emitidas\n\n⚠️ Esta ação vai DELETAR esses documentos do Firestore.\nNÃO PODE SER DESFEITA.',
+    descricao: 'Estas OS estão travadas no painel:\n• Aparecem como pendentes (Cotação/Emissão)\n• Mas têm email final no Firestore OU sumiram da última planilha (email é mais antigo que a planilha)\n\nVer coluna "Motivo" pra detalhe de cada uma.\n\n⚠️ Esta ação vai DELETAR esses documentos antigos do Firestore.\nO documento Emitida/Cancelada da OS é PRESERVADO.\nNÃO PODE SER DESFEITA.',
     itens: candidatos,
     colunas,
     corPrimaria: '#DC2626',
@@ -4074,7 +4104,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v79] limpar OS órfãs detecta resíduos quando há email "Emitida" posterior', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v83] Limpar OS órfãs: usa timestamp da planilha (não 24h fixas)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
