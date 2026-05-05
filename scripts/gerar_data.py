@@ -45,11 +45,32 @@ def fmt_date(val):
         return str(val)[:5]
 
 def download_bytes(url, label):
+    """
+    Retorna (bytes, last_modified_dt).
+    last_modified_dt é o datetime do header HTTP Last-Modified, ou None se ausente.
+    OneDrive/SharePoint expõem Last-Modified com a hora real da última edição do arquivo.
+    """
     print(f"  Baixando {label}...")
     resp = requests.get(url, timeout=60)
     resp.raise_for_status()
-    print(f"  ✓ {label}: {len(resp.content):,} bytes")
-    return resp.content
+
+    last_modified_dt = None
+    last_modified_header = resp.headers.get("Last-Modified", "")
+    if last_modified_header:
+        try:
+            from email.utils import parsedate_to_datetime
+            last_modified_dt = parsedate_to_datetime(last_modified_header)
+            # Converter para fuso de Brasília
+            if last_modified_dt.tzinfo:
+                last_modified_dt = last_modified_dt.astimezone(TZ_BR)
+            print(f"  ✓ {label}: {len(resp.content):,} bytes (Last-Modified: {last_modified_dt.strftime('%d/%m/%Y %H:%M')})")
+        except Exception as e:
+            print(f"  ⚠ {label}: falha parsear Last-Modified ({e})")
+            print(f"  ✓ {label}: {len(resp.content):,} bytes")
+    else:
+        print(f"  ✓ {label}: {len(resp.content):,} bytes (sem Last-Modified)")
+
+    return resp.content, last_modified_dt
 
 def carregar_sourcing(raw_bytes):
     import io
@@ -539,15 +560,20 @@ def processar(os_rows, sourcing, hotel_hist_sgl, hotel_hist_dbl, hotel_emissores
 
     return enriched
 
-def gerar_data_js(enriched, timestamp_str, os_finalizadas=None):
+def gerar_data_js(enriched, timestamp_str, os_finalizadas=None, planilha_ts=""):
     if os_finalizadas is None:
         os_finalizadas = set()
     # Lista de números de OS já finalizadas (do histórico Vol. Hotelaria 2026).
     # Usado pelo painel para filtrar OS de email que apareçam mesmo já tendo sido emitidas.
     finalizadas_js = "[" + ",".join(str(n) for n in sorted(os_finalizadas)) + "]"
+    # PLANILHA_TIMESTAMP = quando o arquivo XLS foi modificado pela última vez (Last-Modified do servidor).
+    # DATA_TIMESTAMP = quando o data.js foi gerado pelo gerar_data.py.
+    # São diferentes: o XLS pode ter sido atualizado às 14h, mas o data.js só foi regenerado às 16h.
+    # Pra Limpar OS órfãs no painel, usar PLANILHA_TIMESTAMP (representa "até quando os dados estão válidos").
     lines = [
         f'// Gerado automaticamente em {timestamp_str}',
         f'const DATA_TIMESTAMP = "{timestamp_str}";',
+        f'const PLANILHA_TIMESTAMP = "{planilha_ts}";',
         f'const OS_FINALIZADAS = new Set({finalizadas_js});',
         'const DATA = [',
     ]
@@ -616,8 +642,20 @@ def main():
         sys.exit(1)
 
     print("\n[1/4] Baixando bases de dados...")
-    xls_bytes      = download_bytes(ONEDRIVE_URL, "SourceHoteis (OS)")
-    sourcing_bytes = download_bytes(SOURCING_URL, "Sourcing 2026")
+    xls_bytes, xls_lm           = download_bytes(ONEDRIVE_URL, "SourceHoteis (OS)")
+    sourcing_bytes, sourcing_lm = download_bytes(SOURCING_URL, "Sourcing 2026")
+
+    # Timestamp lógico da planilha = mais ANTIGO dos arquivos baixados.
+    # Razão: representa "até que momento os dados estão atualizados".
+    # Se um arquivo é de ontem e o outro é de hoje, o conjunto está válido só até ontem.
+    planilha_lm = None
+    if xls_lm and sourcing_lm:
+        planilha_lm = min(xls_lm, sourcing_lm)
+    elif xls_lm:
+        planilha_lm = xls_lm
+    elif sourcing_lm:
+        planilha_lm = sourcing_lm
+    planilha_ts = planilha_lm.strftime("%d/%m/%Y %H:%M") if planilha_lm else ""
 
     print("\n[2/4] Processando Sourcing e Histórico...")
     sourcing = carregar_sourcing(sourcing_bytes)
@@ -637,7 +675,11 @@ def main():
 
     print("\n[4/4] Gerando data.js...")
     ts  = datetime.now(TZ_BR).strftime("%d/%m/%Y %H:%M")
-    js  = gerar_data_js(enriched, ts, os_finalizadas)
+    if planilha_ts:
+        print(f"  Planilha: {planilha_ts} | Geração: {ts}")
+    else:
+        print(f"  Geração: {ts} (sem timestamp da planilha)")
+    js  = gerar_data_js(enriched, ts, os_finalizadas, planilha_ts)
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write(js)
     print(f"  ✓ {OUTPUT_FILE} gravado ({len(js):,} chars)")
