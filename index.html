@@ -407,7 +407,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
       </div>
       <div class="search-wrap">
         <svg class="search-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="4"/><path d="M10.5 10.5l3 3"/></svg>
-        <input type="text" id="searchInput" placeholder="Hotel, consultor, cidade…" oninput="goPage(1);renderGroups()">
+        <input type="text" id="searchInput" placeholder="Hotel, consultor, cidade…" oninput="renderGroupsDebounced()">
       </div>
       <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--ink3);cursor:pointer;flex-shrink:0;">
         <input type="checkbox" id="filterMulti" onchange="goPage(1);renderGroups()">Só múltiplos consultores
@@ -1101,6 +1101,24 @@ function renderRef(g) {
 
 function goPage(p){ currentPage=p; renderGroups(); }
 
+// Debounce: garante que função só execute X ms após o último call.
+// Útil pra eventos rápidos como digitação no campo de busca.
+function debounce(fn, ms) {
+  let timer;
+  return function(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), ms);
+  };
+}
+
+// Versão debounced de renderGroups + goPage(1) — usada na digitação do campo de busca.
+// Evita re-render a cada tecla (custoso em painéis grandes); roda só após 300ms
+// sem digitação (imperceptível pro usuário, mas elimina lag).
+const renderGroupsDebounced = debounce(() => {
+  if (typeof goPage === 'function') goPage(1);
+  renderGroups();
+}, 300);
+
 function renderGroups() {
   // ── LIMPAR OS_EMAIL_STATE (modo legado planilha-first) ────────────────────
   // Modo email-first: NÃO deleta. OS_EMAIL_STATE retém todas as OS de email.
@@ -1123,11 +1141,19 @@ function renderGroups() {
   // Email é a fonte primária; planilha é validação. Email mais recente sempre vence.
   let DATA_BASE = DATA;
   if (MODO_EMAIL_FIRST && typeof OS_EMAIL_STATE !== 'undefined') {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Re-agrupamento email-first: o hotel do email é a fonte da verdade.
+    // Se OS está em ambos (planilha + email) e o email tem hotel diferente,
+    // a OS migra pro grupo do email (existente ou novo).
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // Passo 1: copiar grupos com OS mescladas (email tem prioridade nos campos editáveis)
     DATA_BASE = DATA.map(g => {
       const novosOS = g.os.map(o => {
         const versEmail = OS_EMAIL_STATE[o.n];
-        if (!versEmail) return { ...o, _origem: 'planilha' }; // só na planilha
-        // Em ambos: email ganha. Mantém status/observação editáveis (vêm de STATE).
+        if (!versEmail) return { ...o, _origem: 'planilha' };
+        const hotelEmail = (versEmail.hotel || '').trim();
+        const hotelEmailValido = hotelEmail && !/^sem\s*nome$/i.test(hotelEmail);
         return {
           ...o,
           q: versEmail.q || o.q,
@@ -1138,11 +1164,95 @@ function renderGroups() {
           t: (versEmail.t != null ? versEmail.t : o.t),
           fp: versEmail.fp || o.fp,
           obs_email: versEmail.obs || '',
-          _origem: 'ambos'
+          _origem: 'ambos',
+          _hotelEmail: hotelEmailValido ? hotelEmail : null,
+          _cidadeEmail: versEmail.cidade || ''
         };
       });
       return { ...g, os: novosOS };
     });
+
+    // Passo 2: identificar OS que precisam migrar de grupo
+    const norm = s => (s || '').trim().toUpperCase();
+    const ehSemNome = s => !s || /^SEM\s*NOME$/.test(norm(s));
+
+    const osMover = []; // { os, idxOriginal, hotelEmail, cidadeEmail }
+
+    DATA_BASE.forEach((g, idx) => {
+      g.os.forEach(o => {
+        if (!o._hotelEmail) return;
+        const nomeGrupo = norm(g.h);
+        const nomeEmail = norm(o._hotelEmail);
+        const cidadeGrupo = norm(g.c);
+        const cidadeEmail = norm(o._cidadeEmail);
+
+        // Se grupo é "Sem nome", deve migrar
+        // Se nomes diferem (mesmo após normalizar), deve migrar
+        const grupoSemNome = ehSemNome(g.h);
+        const igual = !grupoSemNome &&
+                      nomeGrupo === nomeEmail &&
+                      (cidadeGrupo === cidadeEmail || !cidadeEmail || !cidadeGrupo);
+
+        if (!igual) {
+          osMover.push({
+            os: o, idxOriginal: idx,
+            hotelEmail: o._hotelEmail,
+            cidadeEmail: o._cidadeEmail || g.c || ''
+          });
+        }
+      });
+    });
+
+    if (osMover.length > 0) {
+      // Passo 3: REMOVER OS movidas dos grupos originais primeiro (estado limpo)
+      const osMovidasIds = new Set(osMover.map(m => m.os.n));
+      DATA_BASE = DATA_BASE.map(g => ({
+        ...g,
+        os: g.os.filter(o => !osMovidasIds.has(o.n))
+      }));
+
+      // Passo 4: agrupar destinos por (hotel, cidade)
+      const destinos = new Map();
+      osMover.forEach(m => {
+        const chave = `${norm(m.hotelEmail)}|||${norm(m.cidadeEmail)}`;
+        if (!destinos.has(chave)) {
+          destinos.set(chave, {
+            hotel: m.hotelEmail,
+            cidade: m.cidadeEmail,
+            osList: []
+          });
+        }
+        destinos.get(chave).osList.push(m.os);
+      });
+
+      // Passo 5: para cada destino, ver se já existe grupo no DATA_BASE atual
+      // (após remoção do passo 3) e adicionar OS lá; senão, criar novo grupo
+      destinos.forEach(dest => {
+        const grupoExistente = DATA_BASE.find(g => {
+          if (ehSemNome(g.h)) return false;
+          return norm(g.h) === norm(dest.hotel) &&
+                 (norm(g.c) === norm(dest.cidade) || !dest.cidade);
+        });
+
+        if (grupoExistente) {
+          dest.osList.forEach(os => grupoExistente.os.push(os));
+        } else {
+          DATA_BASE.push({
+            h: dest.hotel,
+            c: dest.cidade,
+            os: dest.osList,
+            tipo: 'sem_ref',
+            mc: dest.osList.length > 1 &&
+                new Set(dest.osList.map(o => normCons(o.cons))).size > 1,
+            tr: null, tr_dbl: null, n_hist: 0,
+            sourcing_qtd: null, tarifa_origem: null,
+            obs: '', sgls: [], dbls: []
+          });
+        }
+      });
+
+      console.log(`[email-first] ${osMover.length} OS migraram para ${destinos.size} grupos (hotel do email priorizado)`);
+    }
   }
 
   const gruposEmailExtra = typeof getGruposEmail === 'function' ? getGruposEmail() : [];
@@ -1838,6 +1948,15 @@ window.setConsFilter = function(f, el) {
 let hoteisFiltro = 'todos';
 let hoteisSort = {col:'reservas', dir:-1};
 let hoteisSearch = '';
+// Versão debounced para campo de busca da aba Análise Hotelaria.
+// Lazy-init pra esperar window.renderHoteis estar definida.
+let _renderHoteisDebouncedFn = null;
+window.renderHoteisDebounced = function() {
+  if (!_renderHoteisDebouncedFn) {
+    _renderHoteisDebouncedFn = debounce(() => window.renderHoteis(), 300);
+  }
+  _renderHoteisDebouncedFn();
+};
 
 window.renderHoteis = function() {
   const c = document.getElementById('hoteis-content');
@@ -1929,7 +2048,7 @@ window.renderHoteis = function() {
       <button class="hfbtn div ${hoteisFiltro==='divergencia'?'on div':''}" onclick="setHoteisFiltro('divergencia')">Divergência tarifa (${nDiv})</button>
       <button class="hfbtn ac ${hoteisFiltro==='acordo'?'on ac':''}" onclick="setHoteisFiltro('acordo')">Com acordo (${nAcordo})</button>
       <button class="hfbtn ${hoteisFiltro==='sem'?'on':''}" onclick="setHoteisFiltro('sem')">Sem acordo (${nSem})</button>
-      <input class="hsearch" placeholder="Buscar hotel ou cidade…" value="${hoteisSearch}" oninput="hoteisSearch=this.value;renderHoteis()">
+      <input class="hsearch" placeholder="Buscar hotel ou cidade…" value="${hoteisSearch}" oninput="hoteisSearch=this.value;renderHoteisDebounced()">
       <div class="sort-wrap">
         <label>Ordenar</label>
         <select class="sort-select" onchange="hoteisSort={col:this.value,dir:-1};renderHoteis()">
@@ -3646,7 +3765,7 @@ function contarOsEmail() {
 // ── URGÊNCIA DE CHECKIN ──────────────────────────────────────────────────────
 
 function iniciarDashboard() {
-  console.log('%c[Dashboard v73] botão Limpar OS órfãs (auditoria) — para legado pré-cancelamento', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
+  console.log('%c[Dashboard v76] hotel do email reagrupa OS (TODAS as OS, não só Sem Nome)', 'background:#0a7;color:#fff;padding:2px 6px;border-radius:3px;font-weight:bold');
   console.log('%cMODO_EMAIL_FIRST = ' + (typeof MODO_EMAIL_FIRST !== 'undefined' ? MODO_EMAIL_FIRST : 'undefined'), 'color:#0a7;font-weight:bold');
   if (typeof OS_FINALIZADAS !== 'undefined') {
     console.log(`%c${OS_FINALIZADAS.size} OS finalizadas no histórico (filtradas)`, 'color:#0a7;font-weight:bold');
